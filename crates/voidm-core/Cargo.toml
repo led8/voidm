@@ -1,0 +1,47 @@
+[package]
+name = "voidm-core"
+version = "0.8.0"
+edition = "2021"
+description = "Core storage, search, and embedding engine for voidm"
+license = "MIT"
+repository = "https://github.com/autonomous-toaster/voidm"
+keywords = ["memory", "llm", "agents", "embeddings", "sqlite"]
+categories = ["database", "command-line-utilities"]
+
+[dependencies]
+sqlx             = { workspace = true }
+sqlite-vec       = { workspace = true }
+libsqlite3-sys   = { workspace = true }
+fastembed        = { workspace = true }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+uuid             = { workspace = true }
+chrono           = { workspace = true }
+toml             = { workspace = true }
+tokio            = { workspace = true }
+anyhow           = { workspace = true }
+thiserror        = { workspace = true }
+dirs             = { workspace = true }
+tracing          = { workspace = true }
+once_cell        = { workspace = true }
+strsim           = { workspace = true }
+regex            = { workspace = true }
+lazy_static      = { workspace = true }
+voidm-graph      = { path = "../voidm-graph" }
+ort              = { version = "2.0.0-rc.10" }
+hf-hub           = { version = "0.5", features = ["tokio"] }
+tokenizers       = { version = "0.22", default-features = false, features = ["onig"] }
+neo4rs           = "0.7"
+llama-gguf       = { version = "0.13", optional = true, features = ["huggingface"] }
+
+[[bin]]
+name = "onnx_debug"
+path = "src/bin/onnx_debug.rs"
+
+[[bin]]
+name = "gguf_bench"
+path = "src/bin/gguf_bench.rs"
+
+[features]
+default = []
+gguf = ["llama-gguf"]

@@ -1,0 +1,7 @@
+# Cargo configuration
+
+[profile.release]
+lto = true
+
+[net]
+git-fetch-with-cli = true

@@ -1,0 +1,322 @@
+# voidm Configuration Example
+# Location: ~/.config/voidm/config.toml
+
+[database]
+backend = "sqlite"  # "sqlite" (default) or "neo4j"
+
+[database.sqlite]
+path = "~/.local/share/voidm/memories.db"
+
+# Alternatively, use Neo4j
+# backend = "neo4j"
+# [database.neo4j]
+# uri = "bolt://localhost:7687"
+# username = "neo4j"
+# password = "password"
+
+[embeddings]
+enabled = true
+model = "Xenova/all-MiniLM-L6-v2"
+
+[search]
+mode = "hybrid"
+default_limit = 10
+min_score = 0.3
+neighbor_decay = 0.7
+neighbor_min_score = 0.2
+default_neighbor_depth = 1
+default_edge_types = ["PART_OF", "SUPPORTS", "DERIVED_FROM", "EXEMPLIFIES"]
+
+# === GRAPH-AWARE RETRIEVAL CONFIGURATION ===
+# Enable tag-based and concept-based memory retrieval to expand search results
+# with conceptually related memories
+# 
+# This is particularly useful for finding memories related through:
+# - Shared tags (tag overlap scoring)
+# - Shared concepts (ontology relationships with decay by distance)
+#
+# Performance: <500ms total for both functions combined (100K dataset)
+# Target: <200ms tag overlap, <300ms concept distance
+#
+# When disabled, graph-aware results are not included in search results
+
+[search.graph_retrieval]
+enabled = true                          # Enable graph-aware retrieval (default: true)
+max_concept_hops = 2                    # Global default: max hops for concept traversal (default: 2)
+                                        # 1-hop: score=0.7, 2-hop: score=0.49, etc.
+                                        # Higher values = more results but exponential cost
+
+# Tag-based retrieval configuration
+[search.graph_retrieval.tags]
+enabled = true                          # Enable tag-based retrieval (default: true)
+min_overlap = 3                         # Minimum shared tags required (default: 3)
+min_percentage = 50.0                   # Minimum overlap percentage (default: 50%)
+                                        # Formula: overlap_count / max(query_tags, memory_tags) * 100
+decay_factor = 0.7                      # Score multiplier for tag-related results (default: 0.7)
+limit = 5                               # Max tag-related results per direct result (default: 5)
+
+# Concept-based retrieval configuration
+[search.graph_retrieval.concepts]
+enabled = true                          # Enable concept-based retrieval (default: true)
+max_hops = 2                            # Optional: override global max_concept_hops (None = use global)
+                                        # This setting is optional; if not set, uses [search.graph_retrieval].max_concept_hops
+decay_factor = 0.7                      # Score multiplier per hop: score = decay_factor^hops (default: 0.7)
+limit = 3                               # Max concept-related results per direct result (default: 3)
+
+# EXAMPLES:
+#
+# Example 1: Tag-based retrieval finds memory with "Docker" and "Kubernetes"
+#   Query: "Docker container"
+#   Direct match: Memory with content "Docker basics"
+#   Tag overlap: Finds "Kubernetes tutorial" (shared tag: "container", 50% overlap)
+#   Result score: 0.7 (base score * decay_factor)
+#
+# Example 2: Concept-based retrieval
+#   Query: "Docker"
+#   Direct match: Memory linked to concept "Docker"
+#   1-hop: Finds memories linked to "Containerization" (score: 0.7)
+#   2-hop: Finds memories linked to "DevOps" (score: 0.49)
+#   (both concepts related via IS_A edges)
+#
+# PERFORMANCE TUNING:
+#   - max_concept_hops = 1: Conservative, faster, fewer results (~10 per query)
+#   - max_concept_hops = 2: Balanced (recommended), ~50 results per query
+#   - max_concept_hops = 3: Aggressive, slower, ~500 results per query
+#   - max_concept_hops ≥ 4: Exponential growth, not recommended (>1s latency)
+#
+# CLI overrides:
+#   voidm search "query" --graph-retrieval            # Force enable
+#   voidm search "query" --no-graph-retrieval         # Force disable
+
+# === RERANKER CONFIGURATION ===
+# Optional: Enable cross-encoder reranking for better search quality
+# Two models available:
+#   - ms-marco-TinyBERT    : 11MB, 6-12ms/result, 70-80% accuracy vs bge
+#   - bge-reranker-base    : 278MB, 20-30ms/result, highest accuracy
+# 
+# Recommended: Start with ms-marco-TinyBERT for most use cases
+# Use bge-reranker-base only if maximum accuracy is critical
+
+# Example 1: Enable ms-marco-MiniLM-L-6-v2 (recommended - has ONNX support)
+[search.reranker]
+enabled = true  # Test enabled
+model = "ms-marco-MiniLM-L-6-v2"     # Recommended: works reliably with ONNX support
+apply_to_top_k = 15                  # Rerank top-15 results
+# Note: blend parameter is deprecated and no longer used
+# Reranker now uses pure cross-encoder scores
+# 
+# Reranker models with ONNX support (verified working):
+# FAST (<1s - RECOMMENDED):
+# - ms-marco-TinyBERT-L-2: 0.592s latency, 11MB (fastest)
+# - ms-marco-MiniLM-L-6-v2: ~1s latency, 100MB (recommended - best balance)
+# 
+# SLOWER (>1s):
+# - cross-encoder/mmarco-mMiniLMv2-L12-H384-v1: ~10s latency, 110MB
+# - cross-encoder/qnli-distilroberta-base: ~30s latency, 250MB (best quality)
+# 
+# UNSUPPORTED (no ONNX files - will fail):
+# - BAAI/bge-small-reranker-v2: Model does not have ONNX export
+# - BAAI/bge-reranker-base: Model does not have ONNX export
+# - bge-* models: Use cross-encoder/ variants instead
+# 
+# To enable: set enabled = true
+# To use different model: model = "ms-marco-TinyBERT-L-2"
+
+# For reference: other supported ONNX models
+# model = "ms-marco-TinyBERT-L-2"     # Fastest (11MB, 0.6s latency)
+# model = "cross-encoder/qnli-distilroberta-base"  # Best quality but slow (250MB)
+# model = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"  # Alternative (110MB)
+# apply_to_top_k = 10
+
+# Example 3: Disabled (default)
+# [search.reranker]
+# enabled = false
+
+# === QUERY EXPANSION CONFIGURATION ===
+# Optional: Expand queries with synonyms and related terms using small LLMs
+# Improves search recall by automatically generating related search terms
+#
+# Models available:
+#   - tinyllama                        : 1.1B, ONNX backend, good quality + fast (default, recommended)
+#   - tobil/qmd-query-expansion-1.7B   : 1.7B, GGUF backend, better quality (+8.5% relevance, +91.7% keywords)
+#
+# Backend Auto-Detection:
+#   - Models with "tobil" or "qmd" in name → GGUF backend (opt-in)
+#   - All other models → ONNX backend (default)
+#
+# How it works:
+# 1. User searches for "Docker"
+# 2. System expands to: "Docker, containerization, container images, Docker Compose, Kubernetes"
+# 3. Improved recall: finds more relevant results
+# 4. First use downloads model (~300-1200MB), then caches locally
+# 5. Subsequent queries run in <300ms (inference only)
+#
+# Quality:
+# - tinyllama (ONNX): Proven baseline, reliable
+# - tobil/qmd (GGUF): Better keyword extraction, improved semantic understanding
+#   - +91.7% more keywords per query
+#   - +100% more semantic phrases
+#   - +8.5% higher relevance scores
+#
+# Performance:
+# - First use: ~10 minutes (includes download)
+# - Cached queries: <300ms (both models, on M3 MacBook: 257ms measured)
+# - LRU query cache: <1ms (if same query repeated)
+#
+# Recommended: Start with tinyllama (default) for proven stability
+# Use tobil/qmd for quality-focused applications needing better keyword coverage
+
+[search.query_expansion]
+enabled = true  # Test enabled
+model = "tinyllama"                          # Model: "tinyllama" (ONNX, default) or "tobil/qmd-query-expansion-1.7B" (GGUF, opt-in, better quality)
+timeout_ms = 300                             # Max time to wait for expansion (milliseconds)
+
+# Intent-aware expansion (guides expansion toward specific context)
+[search.query_expansion.intent]
+enabled = true                               # Enable intent-aware query expansion
+use_scope_as_fallback = true                 # Use --scope as fallback intent if not explicitly provided
+default_intent = null                        # Optional default intent (e.g., "general", "technical")
+
+# CLI overrides (these take priority over config):
+#   voidm search "query" --query-expand true                      # Enable despite config
+#   voidm search "query" --query-expand false                     # Disable despite config
+#   voidm search "query" --query-expand-model phi-2 --verbose    # Override model
+#   voidm search "query" --query-expand-timeout 500               # Override timeout (ms)
+#   voidm search "query" --intent "oauth2"                        # Provide explicit intent
+
+[insert]
+auto_link_threshold = 0.7
+duplicate_threshold = 0.95
+auto_link_limit = 5
+
+# Reranker parameter guide:
+# - enabled (bool): Turn reranking on/off
+# - model (string): "ms-marco-TinyBERT" or "bge-reranker-base"
+# - apply_to_top_k (usize): Rerank only top-k results (0-100). Higher = more thorough, slower
+# - blend (float 0.0-1.0): DEPRECATED - kept for backward compatibility only
+#   - Previous behavior: final_score = rerank_score * blend + orig_score * (1 - blend)
+#   - New behavior: Uses PURE RERANKER SCORES (always blend=1.0 semantics)
+#   - Why: Cross-encoder is SoTA for relevance ranking; blending dilutes its signal
+#   - Recommendation: Remove 'blend' from your config (or set to any value, it's ignored)
+#
+# CLI overrides:
+#   voidm search "query" --reranker --reranker-model bge-reranker-base --reranker-top-k 15
+
+[enrichment]
+# Enrichment pipeline configuration (optional)
+
+# Semantic deduplication: uses MiniLM embeddings to improve concept merge detection
+[enrichment.semantic_dedup]
+enabled = true                           # Enable semantic dedup (recommended)
+model = "minilm-l6-v2"                  # Model identifier (for caching)
+threshold = 0.75                         # Min semantic similarity (0.0-1.0)
+use_onnx = false                         # Use ONNX Runtime (future optimization)
+
+# USAGE:
+# Enable semantic dedup and run: voidm ontology concept auto-merge --threshold 0.85 --use-semantic
+# This will:
+# 1. Find fuzzy matches (fast first pass)
+# 2. Compute semantic similarity for fuzzy matches
+# 3. Filter by semantic threshold (0.75 default)
+# 4. Present merge candidates sorted by semantic similarity
+#
+# Example similarity scores (with default threshold=0.75):
+# - "Docker" vs "Dockerfile": 0.92 ✓ (will merge)
+# - "Docker" vs "Containerization": 0.72 ✗ (below 0.75, won't merge)
+# - "Docker" vs "Python": 0.23 ✗ (too different)
+#
+# Tune threshold based on your needs:
+# - 0.50-0.65: Liberal (more merges, some false positives)
+# - 0.70-0.80: Balanced (recommended default 0.75)
+# - 0.85-0.95: Conservative (fewer merges, higher confidence)
+
+# Advanced: NLI enrichment settings
+[enrichment.nli]
+enabled = false                          # Compute relation suggestions (slow, ~300MB model)
+top_k = 5                                # Relation candidates per concept
+
+# === SECRETS REDACTION CONFIGURATION ===
+# Automatically detects and redacts sensitive secrets from memory content
+# Prevents leakage of API keys, database credentials, etc. into vector DB or search results
+# Non-blocking: if redaction fails, memory is still inserted (graceful degradation)
+# Performance: ~75ms per memory (with all patterns enabled)
+#
+# What gets redacted:
+# - API Keys (OpenAI: sk-..., AWS: AKIA..., generic: api_key=...)
+# - Database Connection Strings (mysql://, postgresql://, mongodb://...)
+# - JWT Tokens (eyJ... format with three parts separated by dots)
+# - Auth Tokens (Bearer tokens, session_id=..., auth_token=...)
+# - Email Addresses (word@domain.com format)
+#
+# What does NOT get redacted (out of scope):
+# - Credit card numbers
+# - SSN/Tax IDs
+# - Phone numbers
+# - PII in general (focus is secrets only)
+#
+# Redaction strategy: MASKING (preserve first N and last M characters)
+# Example transformations:
+# - API Key: sk-1a2b3c4d5e6f → sk-...6f (preserve first 3, last 2)
+# - JWT: eyJ123...xyz → eyJ...xyz (preserve first 3, last 3)
+# - DB Conn: mysql://user:pass@host/db → mysql://...@host/db (hide credentials)
+# - Email: user@example.com → user@...com (preserve TLD)
+
+[redaction]
+enabled = true                           # Master switch: enable/disable all redaction
+
+[redaction.api_keys]
+enabled = true                           # Redact API keys (OpenAI, AWS, generic)
+strategy = "mask"                        # Masking strategy: "mask" or "remove"
+prefix_length = 3                        # Keep this many chars at start
+suffix_length = 2                        # Keep this many chars at end
+
+[redaction.jwt_tokens]
+enabled = true                           # Redact JWT tokens
+strategy = "mask"
+prefix_length = 3
+suffix_length = 3
+
+[redaction.db_connections]
+enabled = true                           # Redact database connection strings
+strategy = "mask"                        # Special handling: hides credentials, shows host/db
+
+[redaction.auth_tokens]
+enabled = true                           # Redact Bearer and session tokens
+strategy = "mask"
+prefix_length = 2
+suffix_length = 2
+
+[redaction.emails]
+enabled = true                           # Redact email addresses
+strategy = "mask"
+prefix_length = 1
+suffix_length = 3
+
+# USAGE & EXAMPLES:
+# 
+# Example 1: Add memory with secrets (they will be redacted automatically)
+#   voidm add -t episodic -c "API key: sk-1a2b3c4d5e6f7g8h9i0j for OpenAI" --importance 5
+#   → Memory stored with: "API key: sk-...0j for OpenAI"
+#   → Warning logged: "Redacted 1 API key in memory.content"
+#
+# Example 2: Disable redaction (if needed for testing)
+#   # Edit ~/.config/voidm/config.toml
+#   [redaction]
+#   enabled = false
+#
+# Example 3: Redact only API keys, allow emails
+#   [redaction.api_keys]
+#   enabled = true
+#   [redaction.emails]
+#   enabled = false
+#
+# Performance notes:
+# - First memory creation: ~100ms (regex compilation cached after first use)
+# - Subsequent memories: ~75ms per memory
+# - Non-blocking: redaction failures log warning but don't stop memory creation
+#
+# Security notes:
+# - Original non-redacted content is completely discarded
+# - No audit log is created (data is lost after redaction)
+# - Redaction happens before database insertion (secrets never reach disk)
+# - Search results also show redacted content (masked on display)

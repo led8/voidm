@@ -1,0 +1,36 @@
+[package]
+name = "voidm-cli"
+version = "0.8.0"
+edition = "2021"
+description = "voidm — local-first persistent memory CLI for LLM agents"
+license = "MIT"
+repository = "https://github.com/autonomous-toaster/voidm"
+keywords = ["memory", "llm", "agents", "cli", "embeddings"]
+categories = ["command-line-utilities", "database"]
+
+[[bin]]
+name = "voidm"
+path = "src/main.rs"
+
+[lib]
+name = "voidm_cli"
+path = "src/lib.rs"
+
+[dependencies]
+voidm-core       = { path = "../voidm-core" }
+voidm-graph      = { path = "../voidm-graph" }
+sqlx             = { workspace = true }
+clap             = { workspace = true }
+comfy-table      = { workspace = true }
+colored          = { workspace = true }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+uuid             = { workspace = true }
+chrono           = { workspace = true }
+tokio            = { workspace = true }
+toml             = { workspace = true }
+anyhow           = { workspace = true }
+tracing          = { workspace = true }
+tracing-subscriber = { workspace = true }
+reqwest          = { workspace = true }
+dirs             = { workspace = true }

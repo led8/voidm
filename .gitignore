@@ -1,0 +1,31 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal
+
+# fastembed / ONNX model cache
+.fastembed_cache/
+ort_cache/
+
+# voidm config/data (local dev overrides)
+.voidm/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Env
+.env
+.env.local
+
+# Generated graph files
+graph.dot
+graph.svg
+graph.json
