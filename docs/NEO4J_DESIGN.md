@@ -111,7 +111,7 @@ Add to existing config:
 ```toml
 [database]
 backend = "sqlite"  # "sqlite" or "neo4j"
-sqlite_path = "~/.local/share/voidm/memories.db"
+sqlite_path = "~/.codex/memories/voidm/memories.db"
 
 [database.neo4j]
 uri = "bolt://localhost:7687"

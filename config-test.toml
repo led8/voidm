@@ -5,7 +5,9 @@
 backend = "sqlite"  # "sqlite" (default) or "neo4j"
 
 [database.sqlite]
-path = "~/.local/share/voidm/memories.db"
+# Recommended when you want one DB shared by terminal usage and Codex runs.
+# If you prefer the platform default instead, omit this section.
+path = "~/.codex/memories/voidm/memories.db"
 
 # Alternatively, use Neo4j
 # backend = "neo4j"

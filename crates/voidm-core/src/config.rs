@@ -849,7 +849,7 @@ password = "neo4jneo4j"
 backend = "sqlite"
 
 [database.sqlite]
-path = "~/.local/share/voidm/memories.db"
+path = "~/.codex/memories/voidm/memories.db"
 
 [database.neo4j]
 uri = "bolt://localhost:7687"
@@ -867,7 +867,7 @@ password = "neo4jneo4j"
         if let Some(sqlite) = &config.database.sqlite {
             assert_eq!(
                 sqlite.path,
-                Some("~/.local/share/voidm/memories.db".to_string())
+                Some("~/.codex/memories/voidm/memories.db".to_string())
             );
         }
 
@@ -886,7 +886,7 @@ password = "neo4jneo4j"
 backend = "neo4j"
 
 [database.sqlite]
-path = "~/.local/share/voidm/memories.db"
+path = "~/.codex/memories/voidm/memories.db"
 
 [database.neo4j]
 uri = "bolt://localhost:7687"

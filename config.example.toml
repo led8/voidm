@@ -26,7 +26,7 @@
 backend = "sqlite"  # "sqlite" (default) or "neo4j"
 
 [database.sqlite]
-path = "~/.local/share/voidm/memories.db"
+path = "~/.codex/memories/voidm/memories.db"
 
 # Alternatively, use Neo4j
 # backend = "neo4j"

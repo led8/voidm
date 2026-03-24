@@ -820,7 +820,8 @@ voidm/
 ```
 
 - **Storage:** platform-local data dir by default, for example `~/Library/Application Support/voidm/memories.db` on macOS or `~/.local/share/voidm/memories.db` on Linux
-- **Codex sandbox:** when no explicit DB path is set, sandboxed runs fall back to `~/.codex/memories/voidm/memories.db` so agent writes stay inside writable roots
+- **Shared terminal + Codex setup:** set `[database.sqlite] path = "~/.codex/memories/voidm/memories.db"` in `~/.config/voidm/config.toml` if you want both environments to use one DB
+- **Codex sandbox fallback:** when no explicit DB path is set, sandboxed runs fall back to `~/.codex/memories/voidm/memories.db` so agent writes stay inside writable roots
 - **Config:** `~/.config/voidm/config.toml`
 - **ML cache:** `~/.cache/voidm/` (NER + NLI ONNX models, downloaded on first use)
 - **Search pipeline:** Vector ANN (sqlite-vec) + BM25 (FTS5) + fuzzy (strsim) → RRF merge
