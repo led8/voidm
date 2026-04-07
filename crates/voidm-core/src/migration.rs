@@ -49,6 +49,8 @@ pub async fn migrate_memories(
             importance: mem.importance,
             metadata: mem.metadata,
             links: vec![],
+            title: mem.title,
+            context: mem.context,
         };
 
         match dest.add_memory(req, config).await {
@@ -94,6 +96,8 @@ mod tests {
             importance: 5,
             metadata: serde_json::json!({}),
             links: vec![],
+            title: None,
+            context: None,
         };
         let mem = source.add_memory(req, &config).await?;
 
@@ -135,6 +139,8 @@ mod tests {
             importance: 8,
             metadata: serde_json::json!({}),
             links: vec![],
+            title: None,
+            context: None,
         };
         let mem = source.add_memory(req, &config).await?;
         assert_eq!(mem.id, specific_id);
@@ -174,6 +180,8 @@ mod tests {
                         importance: 5,
                         metadata: serde_json::json!({}),
                         links: vec![],
+                        title: None,
+                        context: None,
                     },
                     &config,
                 )
@@ -219,6 +227,8 @@ mod tests {
                     importance: 5,
                     metadata: serde_json::json!({}),
                     links: vec![],
+                    title: None,
+                    context: None,
                 },
                 &config,
             )
@@ -260,6 +270,8 @@ mod tests {
                     importance: 5,
                     metadata: serde_json::json!({}),
                     links: vec![],
+                    title: None,
+                    context: None,
                 },
                 &config,
             )
@@ -276,6 +288,8 @@ mod tests {
                     importance: 5,
                     metadata: serde_json::json!({}),
                     links: vec![],
+                    title: None,
+                    context: None,
                 },
                 &config,
             )
@@ -326,6 +340,8 @@ mod tests {
                         importance: ((i as i64) % 10) + 1,
                         metadata: serde_json::json!({"index": i}),
                         links: vec![],
+                        title: None,
+                        context: None,
                     },
                     &config,
                 )

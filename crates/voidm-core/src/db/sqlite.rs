@@ -374,4 +374,38 @@ impl crate::db::Database for SqliteDatabase {
         let configured_model = configured_model.to_string();
         Box::pin(async move { crate::crud::check_model_mismatch(&pool, &configured_model).await })
     }
+
+    fn sqlite_pool(&self) -> Option<&sqlx::SqlitePool> {
+        Some(&self.pool)
+    }
+
+    fn update_memory_full(
+        &self,
+        id: &str,
+        patch: crate::crud::UpdateMemoryPatch,
+        config: &crate::Config,
+    ) -> Pin<Box<dyn Future<Output = Result<crate::models::Memory>> + Send + '_>> {
+        let pool = self.pool.clone();
+        let id = id.to_string();
+        let config = config.clone();
+        Box::pin(async move { crate::crud::update_memory(&pool, &id, patch, &config).await })
+    }
+
+    fn list_memories_filtered(
+        &self,
+        scope_filter: Option<String>,
+        type_filter: Option<String>,
+        limit: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<crate::models::Memory>>> + Send + '_>> {
+        let pool = self.pool.clone();
+        Box::pin(async move {
+            crate::crud::list_memories(
+                &pool,
+                scope_filter.as_deref(),
+                type_filter.as_deref(),
+                limit,
+            )
+            .await
+        })
+    }
 }

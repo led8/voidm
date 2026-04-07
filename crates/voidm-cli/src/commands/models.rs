@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Subcommand;
-use sqlx::SqlitePool;
-use voidm_core::{embeddings, vector, Config};
+use std::sync::Arc;
+use voidm_core::{db::Database, embeddings, vector, Config};
 
 #[derive(Subcommand)]
 pub enum ModelsCommands {
@@ -38,10 +38,11 @@ pub fn run_list(json: bool) -> Result<()> {
 
 pub async fn run(
     cmd: ModelsCommands,
-    pool: &SqlitePool,
+    db: &Arc<dyn Database>,
     config: &Config,
     json: bool,
 ) -> Result<()> {
+    let pool = db.sqlite_pool().expect("SQLite backend required");
     match cmd {
         ModelsCommands::List => run_list(json),
         ModelsCommands::Download { model } => {

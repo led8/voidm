@@ -215,6 +215,8 @@ async fn migrate_memories(
             importance: mem.importance,
             metadata: mem.metadata.clone(),
             links: vec![],
+            title: mem.title.clone(),
+            context: mem.context.clone(),
         };
 
         let _ = dest.add_memory(req, config).await?;

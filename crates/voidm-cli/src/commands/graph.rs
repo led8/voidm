@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 use sqlx::SqlitePool;
-use voidm_core::resolve_id;
+use std::sync::Arc;
+use voidm_core::{db::Database, resolve_id};
 use voidm_graph;
 
 #[derive(Subcommand)]
@@ -49,12 +50,17 @@ pub struct PathArgs {
 #[derive(Args)]
 pub struct PagerankArgs {
     /// Number of top results to return
-    #[arg(long, default_value = "10")]
-    pub top: usize,
+    #[arg(long, default_value = "20")]
+    pub limit: usize,
+    /// Damping factor (0.0-1.0)
     #[arg(long, default_value = "0.85")]
     pub damping: f64,
-    #[arg(long, default_value = "20")]
+    /// Number of power-method iterations
+    #[arg(long, default_value = "100")]
     pub iterations: u32,
+    /// Filter: only include memories in this scope
+    #[arg(long)]
+    pub scope: Option<String>,
 }
 
 #[derive(Args)]
@@ -70,7 +76,8 @@ pub struct ExportArgs {
     pub min_edges: usize,
 }
 
-pub async fn run(cmd: GraphCommands, pool: &SqlitePool, json: bool) -> Result<()> {
+pub async fn run(cmd: GraphCommands, db: &Arc<dyn Database>, json: bool) -> Result<()> {
+    let pool = db.sqlite_pool().expect("SQLite backend required");
     match cmd {
         GraphCommands::Cypher(args) => run_cypher(args, pool, json).await,
         GraphCommands::Neighbors(args) => run_neighbors(args, pool, json).await,
@@ -194,12 +201,51 @@ async fn run_path(args: PathArgs, pool: &SqlitePool, json: bool) -> Result<()> {
 }
 
 async fn run_pagerank(args: PagerankArgs, pool: &SqlitePool, json: bool) -> Result<()> {
-    let mut results = voidm_graph::pagerank(pool, args.damping, args.iterations).await?;
-    results.truncate(args.top);
+    let ranked = voidm_graph::pagerank(pool, args.damping, args.iterations).await?;
+
+    // Fetch memory content previews and apply optional scope filter
+    let mut results: Vec<(String, f64, String)> = Vec::new();
+    for (id, score) in ranked {
+        // Skip concept:: nodes when scope filtering (they have no scope)
+        if id.starts_with("concept::") {
+            if args.scope.is_none() {
+                results.push((id, score, String::new()));
+            }
+            continue;
+        }
+        // Fetch content + scopes for this memory
+        let row: Option<(String, String)> =
+            sqlx::query_as("SELECT SUBSTR(content, 1, 80), COALESCE(GROUP_CONCAT(ms.scope, ','), '') FROM memories m LEFT JOIN memory_scopes ms ON ms.memory_id = m.id WHERE m.id = ? GROUP BY m.id")
+                .bind(&id)
+                .fetch_optional(pool)
+                .await
+                .unwrap_or(None);
+
+        if let Some((preview, scopes_csv)) = row {
+            // Apply scope filter if set
+            if let Some(ref scope) = args.scope {
+                let scopes: Vec<&str> = scopes_csv.split(',').collect();
+                if !scopes.iter().any(|s| s.starts_with(scope.as_str())) {
+                    continue;
+                }
+            }
+            let preview_trunc = if preview.len() >= 80 {
+                format!("{}...", preview)
+            } else {
+                preview
+            };
+            results.push((id, score, preview_trunc));
+        }
+
+        if results.len() >= args.limit {
+            break;
+        }
+    }
+
     if json {
         let v: Vec<_> = results
             .iter()
-            .map(|(id, score)| serde_json::json!({"id": id, "score": score}))
+            .map(|(id, score, preview)| serde_json::json!({"id": id, "score": score, "preview": preview}))
             .collect();
         println!("{}", serde_json::to_string_pretty(&v)?);
     } else {
@@ -208,8 +254,11 @@ async fn run_pagerank(args: PagerankArgs, pool: &SqlitePool, json: bool) -> Resu
                 "No memories in graph yet. Use 'voidm add' and 'voidm link' to build the graph."
             );
         } else {
-            for (i, (id, score)) in results.iter().enumerate() {
+            for (i, (id, score, preview)) in results.iter().enumerate() {
                 println!("#{} [{:.4}] {}", i + 1, score, id);
+                if !preview.is_empty() {
+                    println!("        {}", preview);
+                }
             }
         }
     }

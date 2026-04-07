@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::Args;
-use sqlx::SqlitePool;
+use std::sync::Arc;
 use voidm_core::{
-    crud,
+    crud, db::Database,
     models::{AddMemoryRequest, EdgeType, LinkSpec, MemoryType},
     Config,
 };
@@ -32,9 +32,18 @@ pub struct AddArgs {
     /// RELATES_TO requires a note: <id>:RELATES_TO:<reason>
     #[arg(long = "link")]
     pub links: Vec<String>,
+
+    /// Short title for fast retrieval (max 200 chars)
+    #[arg(long)]
+    pub title: Option<String>,
+
+    /// Semantic label: gotcha, decision, procedure, reference
+    #[arg(long)]
+    pub context: Option<String>,
 }
 
-pub async fn run(args: AddArgs, pool: &SqlitePool, config: &Config, json: bool) -> Result<()> {
+pub async fn run(args: AddArgs, db: &Arc<dyn Database>, config: &Config, json: bool) -> Result<()> {
+    let pool = db.sqlite_pool().expect("SQLite backend required");
     let memory_type: MemoryType = args.r#type.parse()?;
 
     // Validate importance before touching the DB
@@ -68,6 +77,8 @@ pub async fn run(args: AddArgs, pool: &SqlitePool, config: &Config, json: bool) 
         importance: args.importance,
         metadata: serde_json::Value::Object(Default::default()),
         links: link_specs,
+        title: args.title,
+        context: args.context,
     };
 
     let resp = crud::add_memory(pool, req, config).await?;

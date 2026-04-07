@@ -1,7 +1,6 @@
 use anyhow::Result;
 use clap::Args;
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use std::sync::Arc;
 use voidm_core::{crud, db::Database, models::MemoryEdge, ontology::Concept, Config};
 
@@ -54,8 +53,8 @@ pub struct ExportMetadata {
     pub scopes_included: Vec<String>,
 }
 
-pub async fn run(args: ExportArgs, pool: &SqlitePool, _config: &Config, _json: bool) -> Result<()> {
-    let db = Arc::new(voidm_core::db::sqlite::SqliteDatabase { pool: pool.clone() });
+pub async fn run(args: ExportArgs, db: &Arc<dyn Database>, _config: &Config, _json: bool) -> Result<()> {
+    let pool = db.sqlite_pool().expect("SQLite backend required");
 
     let memories = crud::list_memories(pool, args.scope.as_deref(), None, args.limit).await?;
     let mut edges = Vec::new();

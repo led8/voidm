@@ -1,7 +1,9 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 use sqlx::SqlitePool;
+use std::sync::Arc;
 use uuid::Uuid;
+use voidm_core::db::Database;
 use voidm_core::ontology::{self, HierarchyDirection, NodeKind, OntologyRelType};
 use voidm_core::Config;
 
@@ -283,10 +285,11 @@ pub struct InstancesArgs {
 
 pub async fn run(
     cmd: OntologyCommands,
-    pool: &SqlitePool,
+    db: &Arc<dyn Database>,
     config: &Config,
     json: bool,
 ) -> Result<()> {
+    let pool = db.sqlite_pool().expect("SQLite backend required");
     match cmd {
         OntologyCommands::Concept(sub) => run_concept(sub, pool, config, json).await,
         OntologyCommands::Link(args) => run_link(args, pool, json).await,

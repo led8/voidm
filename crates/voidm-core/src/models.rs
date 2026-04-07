@@ -138,6 +138,12 @@ pub struct Memory {
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality_score: Option<f32>,
+    /// Short label for fast lexical retrieval and display (max 200 chars).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Semantic label: gotcha | decision | procedure | reference.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
 }
 
 /// Request to add a memory.
@@ -151,6 +157,8 @@ pub struct AddMemoryRequest {
     pub importance: i64,
     pub metadata: serde_json::Value,
     pub links: Vec<LinkSpec>,
+    pub title: Option<String>,
+    pub context: Option<String>,
 }
 
 /// A link spec from --link id:TYPE or --link id:RELATES_TO:"note"
@@ -175,6 +183,10 @@ pub struct AddMemoryResponse {
     pub quality_score: Option<f32>,
     pub suggested_links: Vec<SuggestedLink>,
     pub duplicate_warning: Option<DuplicateWarning>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use sqlx::SqlitePool;
+use std::sync::Arc;
 use voidm_core::{
     crud,
     learning::{
@@ -11,6 +12,7 @@ use voidm_core::{
         LearningSearchRequest, LearningSearchResponse, LearningSourceOutcome, LearningTip,
         LearningTipCategory, LEARNING_TIP_VERSION,
     },
+    db::Database,
     models::{AddMemoryRequest, AddMemoryResponse, EdgeType, LinkSpec, MemoryType},
     resolve_id,
     search::SearchMode,
@@ -154,8 +156,12 @@ pub struct LearnSearchArgs {
 #[derive(Args)]
 pub struct LearnIngestArgs {
     /// Path to a trajectory file. Supports JSON object, JSON array, or JSONL.
-    #[arg(long = "from")]
-    pub from: String,
+    #[arg(long = "from", conflicts_with = "stdin")]
+    pub from: Option<String>,
+
+    /// Read trajectory JSON from stdin instead of a file.
+    #[arg(long, conflicts_with = "from")]
+    pub stdin: bool,
 
     /// Preview extracted candidates without writing them.
     #[arg(long, conflicts_with = "write")]
@@ -250,7 +256,8 @@ struct LearnConsolidateResponse {
     pub results: Vec<LearnConsolidateResult>,
 }
 
-pub async fn run(cmd: LearnCommands, pool: &SqlitePool, config: &Config, json: bool) -> Result<()> {
+pub async fn run(cmd: LearnCommands, db: &Arc<dyn Database>, config: &Config, json: bool) -> Result<()> {
+    let pool = db.sqlite_pool().expect("SQLite backend required");
     match cmd {
         LearnCommands::Add(args) => run_add(args, pool, config, json).await,
         LearnCommands::Ingest(args) => run_ingest(args, pool, config, json).await,
@@ -351,8 +358,20 @@ async fn run_ingest(
     config: &Config,
     json: bool,
 ) -> Result<()> {
-    let raw = std::fs::read_to_string(&args.from)
-        .with_context(|| format!("Failed to read trajectory file '{}'", args.from))?;
+    let raw = if args.stdin {
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .context("Failed to read trajectory JSON from stdin")?;
+        buf
+    } else {
+        let path = args.from.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("Provide either --from <file> or --stdin")
+        })?;
+        std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read trajectory file '{}'", path))?
+    };
     let trajectories = parse_learning_trajectories(&raw)?;
 
     let mut results = Vec::new();
@@ -735,6 +754,8 @@ fn build_learning_request(
         importance,
         metadata,
         links,
+        title: None,
+        context: None,
     })
 }
 

@@ -100,7 +100,9 @@ impl crate::db::Database for Neo4jDatabase {
                     scopes: $scopes,
                     created_at: $created_at,
                     updated_at: $created_at,
-                    embedding_model: $model
+                    embedding_model: $model,
+                    title: $title,
+                    context: $context
                 }) RETURN m",
             )
             .param("id", id.clone())
@@ -111,7 +113,9 @@ impl crate::db::Database for Neo4jDatabase {
             .param("metadata", req.metadata.to_string())
             .param("scopes", req.scopes.clone())
             .param("created_at", created_at.clone())
-            .param("model", config_model);
+            .param("model", config_model)
+            .param("title", req.title.clone().unwrap_or_default())
+            .param("context", req.context.clone().unwrap_or_default());
 
             graph
                 .run(query)
@@ -129,6 +133,8 @@ impl crate::db::Database for Neo4jDatabase {
                 quality_score: None,
                 suggested_links: vec![],
                 duplicate_warning: None,
+                title: req.title,
+                context: req.context,
             })
         })
     }
@@ -160,6 +166,8 @@ impl crate::db::Database for Neo4jDatabase {
                     created_at: node.get("created_at").context("Missing created_at")?,
                     updated_at: node.get("updated_at").context("Missing updated_at")?,
                     quality_score: None,
+                    title: node.get("title").ok().filter(|s: &String| !s.is_empty()),
+                    context: node.get("context").ok().filter(|s: &String| !s.is_empty()),
                 };
 
                 Ok(Some(memory))
@@ -202,6 +210,8 @@ impl crate::db::Database for Neo4jDatabase {
                     created_at: node.get("created_at").context("Missing created_at")?,
                     updated_at: node.get("updated_at").unwrap_or_default(),
                     quality_score: None,
+                    title: node.get("title").ok().filter(|s: &String| !s.is_empty()),
+                    context: node.get("context").ok().filter(|s: &String| !s.is_empty()),
                 };
 
                 memories.push(memory);
@@ -696,6 +706,7 @@ impl crate::db::Database for Neo4jDatabase {
                     Ok(Some(memory)) => {
                         best_score = Some(combined_score.max(best_score.unwrap_or(0.0)));
 
+                        let age = crate::search::compute_age_days(&memory.created_at);
                         response_results.push(crate::search::SearchResult {
                             id: memory.id,
                             score: *combined_score,
@@ -711,6 +722,11 @@ impl crate::db::Database for Neo4jDatabase {
                             hop_depth: None,
                             parent_id: None,
                             quality_score: memory.quality_score,
+                            age_days: age,
+                            title: memory.title,
+                            context: memory.context,
+                            context_chunks: vec![],
+                            content_source: None,
                         });
                     }
                     Ok(None) => {
@@ -1164,6 +1180,26 @@ impl crate::db::Database for Neo4jDatabase {
 
             Ok(None)
         })
+    }
+
+    fn update_memory_full(
+        &self,
+        _id: &str,
+        _patch: crate::crud::UpdateMemoryPatch,
+        _config: &crate::Config,
+    ) -> Pin<Box<dyn Future<Output = Result<crate::models::Memory>> + Send + '_>> {
+        Box::pin(async move { anyhow::bail!("update_memory_full not yet implemented for Neo4j") })
+    }
+
+    fn list_memories_filtered(
+        &self,
+        scope_filter: Option<String>,
+        type_filter: Option<String>,
+        limit: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<crate::models::Memory>>> + Send + '_>> {
+        // Best-effort: ignore scope/type filters, delegate to list_memories
+        let _ = (scope_filter, type_filter);
+        self.list_memories(Some(limit))
     }
 }
 

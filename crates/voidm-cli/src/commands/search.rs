@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::Args;
-use sqlx::SqlitePool;
+use std::sync::Arc;
 use voidm_core::{
+    db::Database,
     search::{search, SearchMode, SearchOptions},
     Config,
 };
@@ -100,7 +101,8 @@ pub struct SearchArgs {
     pub verbose: bool,
 }
 
-pub async fn run(args: SearchArgs, pool: &SqlitePool, config: &Config, json: bool) -> Result<()> {
+pub async fn run(args: SearchArgs, db: &Arc<dyn Database>, config: &Config, json: bool) -> Result<()> {
+    let pool = db.sqlite_pool().expect("SQLite backend required");
     let mode: SearchMode = args.mode.parse()?;
 
     // Apply CLI reranker overrides to config
@@ -221,6 +223,7 @@ pub async fn run(args: SearchArgs, pool: &SqlitePool, config: &Config, json: boo
         neighbor_limit: args.neighbor_limit,
         edge_types: args.edge_types,
         intent: args.intent.clone(),
+        max_age_days: None,
     };
 
     let resp = search(
@@ -267,7 +270,25 @@ pub async fn run(args: SearchArgs, pool: &SqlitePool, config: &Config, json: boo
                 );
             }
         } else {
-            println!("{}", serde_json::to_string_pretty(&resp.results)?);
+            let ids: Vec<String> = resp.results.iter().map(|r| r.id.clone()).collect();
+            let conflicts = voidm_core::find_contradicts_among(pool, &ids).await.unwrap_or_default();
+            let conflict_json: Vec<serde_json::Value> = conflicts
+                .iter()
+                .map(|(_, from_id, to_id, note)| {
+                    serde_json::json!({
+                        "from": from_id,
+                        "to": to_id,
+                        "note": note,
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "results": resp.results,
+                    "conflicts": conflict_json,
+                }))?
+            );
         }
     } else {
         if resp.results.is_empty() {
@@ -319,6 +340,23 @@ pub async fn run(args: SearchArgs, pool: &SqlitePool, config: &Config, json: boo
                 println!("  Scopes: {}", r.scopes.join(", "));
             }
             println!();
+        }
+
+        // Inline CONTRADICTS warnings
+        let ids: Vec<String> = resp.results.iter().map(|r| r.id.clone()).collect();
+        if let Ok(conflicts) = voidm_core::find_contradicts_among(pool, &ids).await {
+            if !conflicts.is_empty() {
+                eprintln!("Warning: CONTRADICTS edges among results:");
+                for (_, from_id, to_id, note) in &conflicts {
+                    let from_short = &from_id[..8.min(from_id.len())];
+                    let to_short = &to_id[..8.min(to_id.len())];
+                    if let Some(n) = note {
+                        eprintln!("  {} CONTRADICTS {} — {}", from_short, to_short, n);
+                    } else {
+                        eprintln!("  {} CONTRADICTS {}", from_short, to_short);
+                    }
+                }
+            }
         }
     }
     Ok(())

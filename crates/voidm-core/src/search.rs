@@ -34,6 +34,21 @@ pub struct SearchResult {
     /// Quality score (0.0-1.0) based on content genericity, abstraction, etc.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality_score: Option<f32>,
+    /// Age of the memory in days (days since created_at).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub age_days: Option<u32>,
+    /// Short title if set on the memory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Semantic context label if set (gotcha | decision | procedure | reference).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    /// Top matching chunk texts from chunk-level ANN (empty if no chunks).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub context_chunks: Vec<String>,
+    /// "memory" when matched at memory level, "chunk" when chunk ANN contributed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_source: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -88,6 +103,8 @@ pub struct SearchOptions {
     pub edge_types: Option<Vec<String>>,
     /// Optional intent/context for query expansion guidance.
     pub intent: Option<String>,
+    /// Only return memories created within the last N days. None = no filter.
+    pub max_age_days: Option<u32>,
 }
 
 /// Result of a search, including threshold metadata for empty-result hints.
@@ -99,7 +116,13 @@ pub struct SearchResponse {
     pub best_score: Option<f32>,
 }
 
-/// Full hybrid search pipeline.
+/// Full hybrid search pipeline — unified RRF path for all modes.
+///
+/// Mode → signal preset mapping:
+/// - `semantic`          → vector only
+/// - `bm25` / `keyword`  → bm25 only
+/// - `fuzzy`             → fuzzy only
+/// - `hybrid` / `hybrid-rrf` → all signals (per `config_search.signals`)
 pub async fn search(
     pool: &SqlitePool,
     opts: &SearchOptions,
@@ -108,147 +131,132 @@ pub async fn search(
     config_min_score: f32,
     config_search: &crate::config::SearchConfig,
 ) -> Result<SearchResponse> {
-    // Dispatch to RRF-enhanced search if mode is HybridRRF
-    if opts.mode == SearchMode::HybridRRF {
-        return search_with_rrf(
-            pool,
-            opts,
-            model_name,
-            embeddings_enabled,
-            config_min_score,
-            config_search,
-        )
-        .await;
-    }
+    tracing::info!("Search: Starting search request (mode={:?})", opts.mode);
 
-    use std::collections::HashMap;
+    let fetch_limit = opts.limit * 3;
 
-    tracing::info!("Search: Starting search request");
-    tracing::debug!(
-        "Search: query='{}', mode={:?}, limit={}, min_quality={:?}",
-        opts.query,
-        opts.mode,
-        opts.limit,
-        opts.min_quality
-    );
-    tracing::debug!(
-        "Search: embeddings_enabled={}, config_min_score={}",
-        embeddings_enabled,
-        config_min_score
-    );
+    // Determine active signals for this mode
+    let sig = &config_search.signals;
+    let use_vector = embeddings_enabled
+        && sig.vector
+        && matches!(opts.mode, SearchMode::Hybrid | SearchMode::HybridRRF | SearchMode::Semantic)
+        && crate::vector::vec_table_exists(pool).await.unwrap_or(false);
+    let use_bm25 = sig.bm25
+        && matches!(opts.mode, SearchMode::Hybrid | SearchMode::HybridRRF | SearchMode::Bm25 | SearchMode::Keyword);
+    let use_fuzzy = sig.fuzzy
+        && matches!(opts.mode, SearchMode::Hybrid | SearchMode::HybridRRF | SearchMode::Fuzzy);
 
-    let fetch_limit = opts.limit * 3; // over-fetch for merging
-    let mut scores: HashMap<String, f32> = HashMap::new();
+    let mut vector_results: Vec<(String, f32)> = Vec::new();
+    let mut bm25_results: Vec<(String, f32)> = Vec::new();
+    let mut fuzzy_results: Vec<(String, f32)> = Vec::new();
+    let mut chunk_hits: std::collections::HashMap<String, (f32, Vec<String>)> = std::collections::HashMap::new();
 
     // --- Vector ANN ---
-    let use_vector = embeddings_enabled
-        && matches!(opts.mode, SearchMode::Hybrid | SearchMode::Semantic)
-        && crate::vector::vec_table_exists(pool).await.unwrap_or(false);
-
     if use_vector {
-        tracing::debug!("Search: Attempting vector-based search");
-        match crate::embeddings::embed_text(model_name, &opts.query) {
-            Ok(embedding) => {
-                match crate::vector::ann_search(pool, &embedding, fetch_limit).await {
-                    Ok(hits) => {
-                        for (id, dist) in hits {
-                            // Convert cosine distance [0,2] to similarity [0,1]
-                            let sim = 1.0 - (dist / 2.0).clamp(0.0, 1.0);
-                            *scores.entry(id).or_default() += sim * 0.5;
-                        }
-                    }
-                    Err(e) => tracing::warn!("Vector search failed: {}", e),
+        if let Ok(embedding) = crate::embeddings::embed_text(model_name, &opts.query) {
+            if let Ok(hits) = crate::vector::ann_search(pool, &embedding, fetch_limit).await {
+                for (id, dist) in hits {
+                    let sim = 1.0 - (dist / 2.0).clamp(0.0, 1.0);
+                    vector_results.push((id, sim));
                 }
+                vector_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             }
-            Err(e) => tracing::warn!("Embedding failed: {}", e),
+            // Chunk ANN: inject as extra vector-level hits + populate chunk_hits
+            if let Ok(chunk_results) = crate::vector::chunk_ann_search(pool, &embedding, fetch_limit).await {
+                let mut dummy: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
+                collect_chunk_hits(pool, chunk_results, &mut dummy, &mut chunk_hits, 0.15).await;
+                for (mem_id, (sim, _)) in &chunk_hits {
+                    if !vector_results.iter().any(|(id, _)| id == mem_id) {
+                        vector_results.push((mem_id.clone(), sim * 0.8));
+                    }
+                }
+                vector_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            }
         }
     }
 
     // --- BM25 via FTS5 ---
-    let use_bm25 = matches!(
-        opts.mode,
-        SearchMode::Hybrid | SearchMode::Bm25 | SearchMode::Keyword
-    );
     if use_bm25 {
         let fts_query = sanitize_fts_query(&opts.query);
-        let rows: Vec<(String, f32)> = sqlx::query_as(
+        if let Ok(rows) = sqlx::query_as::<_, (String, f32)>(
             "SELECT id, bm25(memories_fts) AS score FROM memories_fts WHERE content MATCH ? ORDER BY score LIMIT ?"
         )
         .bind(&fts_query)
         .bind(fetch_limit as i64)
         .fetch_all(pool)
-        .await
-        .unwrap_or_default();
-
-        // BM25 scores are negative in FTS5 (more negative = more relevant)
-        let min_bm25 = rows.iter().map(|(_, s)| *s).fold(f32::MAX, f32::min);
-        let max_bm25 = rows.iter().map(|(_, s)| *s).fold(f32::MIN, f32::max);
-        let range = (max_bm25 - min_bm25).abs().max(0.001);
-
-        for (id, raw_score) in rows {
-            // Normalize to [0, 1] where higher = more relevant (invert because BM25 is negative)
-            let norm = 1.0 - ((raw_score - min_bm25) / range).clamp(0.0, 1.0);
-            *scores.entry(id).or_default() += norm * 0.3;
+        .await {
+            let min_bm25 = rows.iter().map(|(_, s)| *s).fold(f32::MAX, f32::min);
+            let max_bm25 = rows.iter().map(|(_, s)| *s).fold(f32::MIN, f32::max);
+            let range = (max_bm25 - min_bm25).abs().max(0.001);
+            for (id, raw) in rows {
+                let norm = 1.0 - ((raw - min_bm25) / range).clamp(0.0, 1.0);
+                bm25_results.push((id, norm));
+            }
+            bm25_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         }
     }
 
     // --- Fuzzy (Jaro-Winkler) ---
-    let use_fuzzy = matches!(opts.mode, SearchMode::Hybrid | SearchMode::Fuzzy);
     if use_fuzzy {
-        let all: Vec<(String, String)> =
-            sqlx::query_as("SELECT id, content FROM memories ORDER BY created_at DESC LIMIT 500")
-                .fetch_all(pool)
-                .await
-                .unwrap_or_default();
-
-        let query_lower = opts.query.to_lowercase();
-        for (id, content) in all {
-            let sim = strsim::jaro_winkler(&query_lower, &content.to_lowercase()) as f32;
-            if sim > 0.6 {
-                *scores.entry(id).or_default() += sim * 0.2;
+        if let Ok(all) = sqlx::query_as::<_, (String, String)>(
+            "SELECT id, content FROM memories ORDER BY created_at DESC LIMIT 500"
+        )
+        .fetch_all(pool)
+        .await {
+            let q = opts.query.to_lowercase();
+            for (id, content) in all {
+                let sim = strsim::jaro_winkler(&q, &content.to_lowercase()) as f32;
+                if sim > 0.6 {
+                    fuzzy_results.push((id, sim));
+                }
             }
+            fuzzy_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         }
     }
 
-    if scores.is_empty() {
-        // Fallback: return newest memories (no threshold applied — no scores to compare)
+    // Assemble signals for RRF
+    let mut signals: Vec<(&str, Vec<(String, f32)>)> = Vec::new();
+    if !vector_results.is_empty() { signals.push(("vector", vector_results)); }
+    if !bm25_results.is_empty()   { signals.push(("bm25",   bm25_results)); }
+    if !fuzzy_results.is_empty()  { signals.push(("fuzzy",  fuzzy_results)); }
+
+    if signals.is_empty() {
         let memories = fetch_memories_newest(pool, opts).await?;
-        return Ok(SearchResponse {
-            results: memories,
-            threshold_applied: None,
-            best_score: None,
-        });
+        return Ok(SearchResponse { results: memories, threshold_applied: None, best_score: None });
     }
 
-    // Collect IDs sorted by score
-    let mut ranked: Vec<(String, f32)> = scores.into_iter().collect();
-    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    ranked.truncate(opts.limit);
+    // RRF fusion
+    let fused = crate::rrf_fusion::RRFFusion::default().fuse(signals);
 
-    // Fetch full memory records for top results
+    // Build results
     let mut results = Vec::new();
-    for (id, score) in ranked {
-        if let Some(m) = fetch_memory_by_id(pool, &id).await? {
-            // Apply scope/type filters
+    let mut best_score: Option<f32> = None;
+
+    for rrf_result in fused.iter().take(opts.limit * 2) {
+        if let Some(m) = fetch_memory_by_id(pool, &rrf_result.id).await? {
             if let Some(ref scope) = opts.scope_filter {
-                if !m.scopes.iter().any(|s| s.starts_with(scope.as_str())) {
-                    continue;
-                }
+                if !m.scopes.iter().any(|s| s.starts_with(scope.as_str())) { continue; }
             }
             if let Some(ref t) = opts.type_filter {
-                if m.memory_type != *t {
-                    continue;
-                }
+                if m.memory_type != *t { continue; }
             }
-            // Boost by importance
-            let importance_boost = (m.importance as f32 - 5.0) * 0.02;
+            let age = compute_age_days(&m.created_at);
+            if let (Some(max), Some(age_val)) = (opts.max_age_days, age) {
+                if age_val > max { continue; }
+            }
 
-            // Use persisted quality_score from DB (already fetched via get_memory)
-            let quality_score = m.quality_score;
+            let importance_boost = (m.importance as f32 - 5.0) * 0.02;
+            let tb = title_boost(&opts.query, m.title.as_deref());
+            let final_score = rrf_result.rrf_score + importance_boost + tb;
+            best_score = Some(best_score.unwrap_or(final_score).max(final_score));
+
+            let (ctx_chunks, content_src) = chunk_hits.remove(&rrf_result.id)
+                .map(|(_, chunks)| (chunks, Some("chunk".to_string())))
+                .unwrap_or_default();
 
             results.push(SearchResult {
-                id,
-                score: score + importance_boost,
+                id: rrf_result.id.clone(),
+                score: final_score,
                 memory_type: m.memory_type,
                 content: m.content,
                 scopes: m.scopes,
@@ -260,15 +268,18 @@ pub async fn search(
                 direction: None,
                 hop_depth: None,
                 parent_id: None,
-                quality_score,
+                quality_score: m.quality_score,
+                age_days: age,
+                title: m.title,
+                context: m.context,
+                context_chunks: ctx_chunks,
+                content_source: content_src,
             });
+
+            if results.len() >= opts.limit { break; }
         }
     }
-    results.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
 
     // Apply reranker if enabled (before quality/threshold filters)
     if let Some(reranker_config) = &config_search.reranker {
@@ -320,39 +331,22 @@ pub async fn search(
         results.retain(|r| r.quality_score.unwrap_or(0.0) >= min_quality);
     }
 
-    // Apply threshold — only in hybrid mode
-    if opts.mode == SearchMode::Hybrid {
+    // Apply threshold — only in hybrid modes
+    let threshold_applied = if matches!(opts.mode, SearchMode::Hybrid | SearchMode::HybridRRF) {
         let threshold = opts.min_score.unwrap_or(config_min_score);
-        let best_score = results.first().map(|r| r.score);
         let before_count = results.len();
         results.retain(|r| r.score >= threshold);
-
-        let threshold_applied = if results.len() < before_count {
-            Some(threshold)
-        } else {
-            None
-        };
-
-        if opts.include_neighbors {
-            expand_neighbors(pool, &mut results, opts, config_search).await?;
-        }
-
-        return Ok(SearchResponse {
-            results,
-            threshold_applied,
-            best_score,
-        });
-    }
+        if results.len() < before_count { Some(threshold) } else { None }
+    } else {
+        None
+    };
 
     if opts.include_neighbors {
         expand_neighbors(pool, &mut results, opts, config_search).await?;
     }
 
-    Ok(SearchResponse {
-        results,
-        threshold_applied: None,
-        best_score: None,
-    })
+    tracing::info!("Search: Returning {} results", results.len());
+    Ok(SearchResponse { results, threshold_applied, best_score })
 }
 
 /// Expand search results with graph neighbors in-place.
@@ -415,6 +409,7 @@ async fn expand_neighbors(
                 // Use persisted quality_score from DB (already fetched via get_memory)
                 let quality_score = m.quality_score;
 
+                let age = compute_age_days(&m.created_at);
                 neighbors_to_add.push(SearchResult {
                     id: hop.memory_id,
                     score: nscore,
@@ -429,7 +424,12 @@ async fn expand_neighbors(
                     direction: Some(hop.direction),
                     hop_depth: Some(hop.depth),
                     parent_id: Some(parent_id.clone()),
+                    title: m.title,
+                    context: m.context,
                     quality_score,
+                    age_days: age,
+                    context_chunks: vec![],
+                    content_source: None,
                 });
                 if neighbors_to_add.len() >= limit {
                     break 'outer;
@@ -461,27 +461,106 @@ async fn fetch_memories_newest(
     .await?;
     Ok(memories
         .into_iter()
-        .map(|m| SearchResult {
-            id: m.id,
-            score: 0.0,
-            memory_type: m.memory_type,
-            content: m.content,
-            scopes: m.scopes,
-            tags: m.tags,
-            importance: m.importance,
-            created_at: m.created_at,
-            source: "search".into(),
-            rel_type: None,
-            direction: None,
-            hop_depth: None,
-            parent_id: None,
-            quality_score: m.quality_score,
+        .map(|m| {
+            let age = compute_age_days(&m.created_at);
+            SearchResult {
+                id: m.id,
+                score: 0.0,
+                memory_type: m.memory_type,
+                content: m.content,
+                scopes: m.scopes,
+                tags: m.tags,
+                importance: m.importance,
+                created_at: m.created_at,
+                source: "search".into(),
+                rel_type: None,
+                direction: None,
+                hop_depth: None,
+                parent_id: None,
+                quality_score: m.quality_score,
+                age_days: age,
+                title: m.title,
+                context: m.context,
+                context_chunks: vec![],
+                content_source: None,
+            }
         })
         .collect())
 }
 
 async fn fetch_memory_by_id(pool: &SqlitePool, id: &str) -> Result<Option<Memory>> {
     crate::crud::get_memory(pool, id).await
+}
+
+/// Process chunk ANN results into score contributions and chunk_hits map.
+/// chunk_id format: "{memory_id}_{index}"
+/// Adds `weight` * sim to scores[memory_id], keeps top-2 chunk texts per memory.
+async fn collect_chunk_hits(
+    pool: &SqlitePool,
+    chunk_results: Vec<(String, f32)>,
+    scores: &mut std::collections::HashMap<String, f32>,
+    chunk_hits: &mut std::collections::HashMap<String, (f32, Vec<String>)>,
+    weight: f32,
+) {
+    for (chunk_id, dist) in chunk_results {
+        let sim = 1.0 - (dist / 2.0).clamp(0.0, 1.0);
+        // Extract memory_id as everything before the last '_'
+        let memory_id = match chunk_id.rfind('_') {
+            Some(pos) => chunk_id[..pos].to_string(),
+            None => continue,
+        };
+
+        *scores.entry(memory_id.clone()).or_default() += sim * weight;
+
+        let entry = chunk_hits.entry(memory_id.clone()).or_insert((0.0, vec![]));
+        if sim > entry.0 {
+            entry.0 = sim;
+        }
+        if entry.1.len() < 2 {
+            // Fetch chunk content
+            if let Ok(Some(content)) = sqlx::query_scalar::<_, String>(
+                "SELECT content FROM chunks WHERE id = ?"
+            )
+            .bind(&chunk_id)
+            .fetch_optional(pool)
+            .await
+            {
+                entry.1.push(content);
+            }
+        }
+    }
+}
+
+/// Compute age in days from an RFC3339 `created_at` string.
+pub fn compute_age_days(created_at: &str) -> Option<u32> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    // Parse the RFC3339 timestamp by finding the seconds since epoch
+    // Simple approach: parse up to second precision manually
+    let ts = chrono::DateTime::parse_from_rfc3339(created_at).ok()?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64;
+    let created_secs = ts.timestamp();
+    let diff = now.saturating_sub(created_secs);
+    Some((diff / 86400) as u32)
+}
+
+/// Post-RRF title-based score boost (tiebreaker, not main signal).
+/// exact match +2.0, prefix +1.5, substring +1.0
+fn title_boost(query: &str, title: Option<&str>) -> f32 {
+    let Some(t) = title else { return 0.0 };
+    let q = query.to_lowercase();
+    let t = t.to_lowercase();
+    if t == q {
+        2.0
+    } else if t.starts_with(&q) {
+        1.5
+    } else if t.contains(&q) {
+        1.0
+    } else {
+        0.0
+    }
 }
 
 fn sanitize_fts_query(q: &str) -> String {
@@ -670,189 +749,3 @@ async fn apply_reranker(
     Ok(())
 }
 
-/// Enhanced hybrid search with Reciprocal Rank Fusion (RRF).
-///
-/// Combines vector, BM25, and fuzzy signals using RRF instead of weighted averaging.
-/// Benefits:
-/// - Better ranking by combining signals without manual weights
-/// - Preserves high-confidence matches (rank 1-3 bonuses)
-/// - Prevents any single signal from dominating
-///
-/// Usage: Enable via SearchMode or config option
-pub async fn search_with_rrf(
-    pool: &SqlitePool,
-    opts: &SearchOptions,
-    model_name: &str,
-    embeddings_enabled: bool,
-    config_min_score: f32,
-    config_search: &crate::config::SearchConfig,
-) -> Result<SearchResponse> {
-    use std::collections::HashMap;
-
-    tracing::info!("Search (RRF): Starting RRF-enhanced search request");
-    tracing::debug!(
-        "Search (RRF): query='{}', mode={:?}, limit={}",
-        opts.query,
-        opts.mode,
-        opts.limit
-    );
-
-    let fetch_limit = opts.limit * 3; // over-fetch for merging
-
-    // Collect signal results separately for RRF
-    let mut vector_results: Vec<(String, f32)> = Vec::new();
-    let mut bm25_results: Vec<(String, f32)> = Vec::new();
-    let mut fuzzy_results: Vec<(String, f32)> = Vec::new();
-
-    // --- Vector ANN Signal ---
-    let use_vector = embeddings_enabled
-        && matches!(opts.mode, SearchMode::Hybrid | SearchMode::Semantic)
-        && crate::vector::vec_table_exists(pool).await.unwrap_or(false);
-
-    if use_vector {
-        tracing::debug!("Search (RRF): Vector signal");
-        if let Ok(embedding) = crate::embeddings::embed_text(model_name, &opts.query) {
-            if let Ok(hits) = crate::vector::ann_search(pool, &embedding, fetch_limit).await {
-                for (id, dist) in hits {
-                    let sim = 1.0 - (dist / 2.0).clamp(0.0, 1.0);
-                    vector_results.push((id, sim));
-                }
-                // Sort by score descending for RRF
-                vector_results
-                    .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            }
-        }
-    }
-
-    // --- BM25 Signal ---
-    let use_bm25 = matches!(
-        opts.mode,
-        SearchMode::Hybrid | SearchMode::Bm25 | SearchMode::Keyword
-    );
-    if use_bm25 {
-        tracing::debug!("Search (RRF): BM25 signal");
-        let fts_query = sanitize_fts_query(&opts.query);
-        if let Ok(rows) = sqlx::query_as::<_, (String, f32)>(
-            "SELECT id, bm25(memories_fts) AS score FROM memories_fts WHERE content MATCH ? ORDER BY score LIMIT ?"
-        )
-        .bind(&fts_query)
-        .bind(fetch_limit as i64)
-        .fetch_all(pool)
-        .await {
-            let min_bm25 = rows.iter().map(|(_, s)| *s).fold(f32::MAX, f32::min);
-            let max_bm25 = rows.iter().map(|(_, s)| *s).fold(f32::MIN, f32::max);
-            let range = (max_bm25 - min_bm25).abs().max(0.001);
-
-            for (id, raw_score) in rows {
-                let norm = 1.0 - ((raw_score - min_bm25) / range).clamp(0.0, 1.0);
-                bm25_results.push((id, norm));
-            }
-            bm25_results.sort_by(|a, b| {
-                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
-    }
-
-    // --- Fuzzy Signal ---
-    let use_fuzzy = matches!(opts.mode, SearchMode::Hybrid | SearchMode::Fuzzy);
-    if use_fuzzy {
-        tracing::debug!("Search (RRF): Fuzzy signal");
-        if let Ok(all) = sqlx::query_as::<_, (String, String)>(
-            "SELECT id, content FROM memories ORDER BY created_at DESC LIMIT 500",
-        )
-        .fetch_all(pool)
-        .await
-        {
-            let query_lower = opts.query.to_lowercase();
-            for (id, content) in all {
-                let sim = strsim::jaro_winkler(&query_lower, &content.to_lowercase()) as f32;
-                if sim > 0.6 {
-                    fuzzy_results.push((id, sim));
-                }
-            }
-            fuzzy_results
-                .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        }
-    }
-
-    // Prepare signals for RRF
-    let mut signals: Vec<(&str, Vec<(String, f32)>)> = Vec::new();
-    if !vector_results.is_empty() {
-        signals.push(("vector", vector_results));
-    }
-    if !bm25_results.is_empty() {
-        signals.push(("bm25", bm25_results));
-    }
-    if !fuzzy_results.is_empty() {
-        signals.push(("fuzzy", fuzzy_results));
-    }
-
-    if signals.is_empty() {
-        // Fallback: return newest memories
-        let memories = fetch_memories_newest(pool, opts).await?;
-        return Ok(SearchResponse {
-            results: memories,
-            threshold_applied: None,
-            best_score: None,
-        });
-    }
-
-    // Apply RRF fusion
-    let rrf = crate::rrf_fusion::RRFFusion::default();
-    let fused = rrf.fuse(signals);
-
-    tracing::debug!("Search (RRF): RRF fusion complete, {} results", fused.len());
-
-    // Fetch full memory records
-    let mut results = Vec::new();
-    let mut best_score = None;
-
-    for rrf_result in fused.iter().take(opts.limit * 2) {
-        if let Some(m) = fetch_memory_by_id(pool, &rrf_result.id).await? {
-            if let Some(ref scope) = opts.scope_filter {
-                if !m.scopes.iter().any(|s| s.starts_with(scope.as_str())) {
-                    continue;
-                }
-            }
-            if let Some(ref t) = opts.type_filter {
-                if m.memory_type != *t {
-                    continue;
-                }
-            }
-
-            let importance_boost = (m.importance as f32 - 5.0) * 0.02;
-            let final_score = rrf_result.rrf_score + importance_boost;
-
-            best_score = Some(best_score.unwrap_or(final_score).max(final_score));
-
-            results.push(SearchResult {
-                id: rrf_result.id.clone(),
-                score: final_score,
-                memory_type: m.memory_type,
-                content: m.content,
-                scopes: m.scopes,
-                tags: m.tags,
-                importance: m.importance,
-                created_at: m.created_at,
-                source: "search".into(),
-                rel_type: None,
-                direction: None,
-                hop_depth: None,
-                parent_id: None,
-                quality_score: m.quality_score,
-            });
-
-            if results.len() >= opts.limit {
-                break;
-            }
-        }
-    }
-
-    tracing::info!("Search (RRF): Returning {} results", results.len());
-
-    Ok(SearchResponse {
-        results,
-        threshold_applied: None,
-        best_score,
-    })
-}

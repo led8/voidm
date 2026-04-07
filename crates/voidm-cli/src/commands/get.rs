@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Args;
-use sqlx::SqlitePool;
-use voidm_core::{crud, resolve_id};
+use std::sync::Arc;
+use voidm_core::{crud, db::Database, resolve_id};
 
 #[derive(Args)]
 pub struct GetArgs {
@@ -9,7 +9,8 @@ pub struct GetArgs {
     pub id: String,
 }
 
-pub async fn run(args: GetArgs, pool: &SqlitePool, json: bool) -> Result<()> {
+pub async fn run(args: GetArgs, db: &Arc<dyn Database>, json: bool) -> Result<()> {
+    let pool = db.sqlite_pool().expect("SQLite backend required");
     let id = match resolve_id(pool, &args.id).await {
         Ok(id) => id,
         Err(e) => {
@@ -41,7 +42,13 @@ pub async fn run(args: GetArgs, pool: &SqlitePool, json: bool) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&m)?);
             } else {
                 println!("ID:         {}", m.id);
+                if let Some(ref t) = m.title {
+                    println!("Title:      {}", t);
+                }
                 println!("Type:       {}", m.memory_type);
+                if let Some(ref c) = m.context {
+                    println!("Context:    {}", c);
+                }
                 println!("Importance: {}", m.importance);
                 if let Some(qs) = m.quality_score {
                     println!("Quality:    {:.2}", qs);

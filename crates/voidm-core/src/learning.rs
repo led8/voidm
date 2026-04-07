@@ -612,6 +612,7 @@ pub async fn search_learning_tips(
         neighbor_limit: None,
         edge_types: None,
         intent: None,
+        max_age_days: None,
     };
 
     let response = crate::search::search(
@@ -766,6 +767,8 @@ pub async fn apply_learning_consolidation(
         importance: cluster.canonical_importance,
         metadata,
         links: vec![],
+        title: None,
+        context: None,
     };
 
     let canonical_memory = crate::crud::add_memory(pool, request, config).await?;
@@ -1832,6 +1835,8 @@ mod tests {
                 created_at: "2026-03-16T00:00:00Z".to_string(),
                 updated_at: "2026-03-16T00:00:00Z".to_string(),
                 quality_score: Some(0.9),
+                title: None,
+                context: None,
             },
             learning_tip: tip,
         }
@@ -1870,6 +1875,8 @@ mod tests {
                 importance: 7,
                 metadata,
                 links: vec![],
+                title: None,
+                context: None,
             },
             config,
         )

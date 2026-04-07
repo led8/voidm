@@ -1,7 +1,8 @@
 use anyhow::{bail, Result};
 use clap::{Args, Subcommand};
 use sqlx::SqlitePool;
-use voidm_core::ontology;
+use std::sync::Arc;
+use voidm_core::{db::Database, ontology};
 
 // ─── CLI types ────────────────────────────────────────────────────────────────
 
@@ -31,7 +32,8 @@ pub struct ConflictsResolveArgs {
 
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
-pub async fn run(cmd: ConflictsCommands, pool: &SqlitePool, json: bool) -> Result<()> {
+pub async fn run(cmd: ConflictsCommands, db: &Arc<dyn Database>, json: bool) -> Result<()> {
+    let pool = db.sqlite_pool().expect("SQLite backend required");
     match cmd {
         ConflictsCommands::List(args) => run_list(args, pool, json).await,
         ConflictsCommands::Resolve(args) => run_resolve(args, pool, json).await,

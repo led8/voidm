@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Args;
-use sqlx::SqlitePool;
-use voidm_core::{crud, models::EdgeType, resolve_id};
+use std::sync::Arc;
+use voidm_core::{crud, db::Database, models::EdgeType, resolve_id};
 
 #[derive(Args)]
 pub struct LinkArgs {
@@ -16,7 +16,8 @@ pub struct LinkArgs {
     pub note: Option<String>,
 }
 
-pub async fn run(args: LinkArgs, pool: &SqlitePool, json: bool) -> Result<()> {
+pub async fn run(args: LinkArgs, db: &Arc<dyn Database>, json: bool) -> Result<()> {
+    let pool = db.sqlite_pool().expect("SQLite backend required");
     let edge_type: EdgeType = args.rel.parse()?;
     let from = resolve_id(pool, &args.from).await?;
     let to = resolve_id(pool, &args.to).await?;

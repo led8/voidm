@@ -20,6 +20,7 @@ ort_cache/
 *.swp
 *.swo
 .DS_Store
+.claude
 
 # Env
 .env

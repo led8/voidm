@@ -205,6 +205,7 @@ pub async fn find_related_by_tags(
                     * 100.0;
                 let score = (overlap_pct / 100.0) * config.decay_factor;
 
+                let age = crate::search::compute_age_days(&memory.created_at);
                 related.push(SearchResult {
                     id: memory.id,
                     score,
@@ -220,6 +221,11 @@ pub async fn find_related_by_tags(
                     hop_depth: None,
                     parent_id: Some(direct_result.id.clone()),
                     quality_score: None,
+                    age_days: age,
+                    title: memory.title,
+                    context: memory.context,
+                    context_chunks: vec![],
+                    content_source: None,
                 });
             }
         }
@@ -333,6 +339,8 @@ async fn find_memories_by_tag_overlap(
             created_at,
             updated_at,
             quality_score: None,
+            title: None,
+            context: None,
         };
 
         results.push((memory, overlap_count));
@@ -441,6 +449,11 @@ pub async fn find_related_by_concepts(
                             hop_depth: Some(hops as u8),
                             parent_id: Some(direct_result.id.clone()),
                             quality_score: None,
+                            age_days: None,
+                            title: None,
+                            context: None,
+                            context_chunks: vec![],
+                            content_source: None,
                         });
 
                         seen_ids.insert(instance_id);
@@ -733,6 +746,11 @@ mod tests {
             hop_depth: None,
             parent_id: None,
             quality_score: None,
+            age_days: None,
+            title: None,
+            context: None,
+            context_chunks: vec![],
+            content_source: None,
         }
     }
 

@@ -4,7 +4,8 @@ use tracing_subscriber::EnvFilter;
 
 use cli_config::CliConfigOverrides;
 use voidm_cli::{cli_config, commands};
-use voidm_core::{open_pool, Config};
+use std::sync::Arc;
+use voidm_core::{db::DbPool, Config};
 
 #[derive(Parser)]
 #[command(
@@ -20,6 +21,10 @@ pub struct Cli {
     /// Output JSON (machine-readable)
     #[arg(long, global = true)]
     pub json: bool,
+
+    /// Agent mode: compact token-minimal JSON output optimised for LLM consumption [env: VOIDM_AGENT_MODE]
+    #[arg(long, global = true, env = "VOIDM_AGENT_MODE")]
+    pub agent: bool,
 
     /// Suppress decorative output
     #[arg(short, long, global = true)]
@@ -169,6 +174,16 @@ pub enum Commands {
     Migrate(commands::migrate::MigrateArgs),
     /// Check for new releases on GitHub
     CheckUpdate(commands::update::CheckUpdateArgs),
+    /// Update a memory in-place (preserves ID and graph edges)
+    Update(commands::mem_update::UpdateMemoryArgs),
+    /// Recall startup context in one call (architecture, constraints, decisions, procedures, preferences)
+    Recall(commands::recall::RecallArgs),
+    /// List memories older than N days for staleness review
+    Stale(commands::stale::StaleArgs),
+    /// Add multiple memories from a JSON file in one call
+    BatchAdd(commands::batch_add::BatchAddArgs),
+    /// Show provenance summary for a memory (graph edges, tags, age)
+    Why(commands::why::WhyArgs),
 }
 
 #[tokio::main]
@@ -202,6 +217,7 @@ async fn main() {
 
     let json = cli.json;
     let result = run(cli).await;
+
     match result {
         Ok(()) => {}
         Err(e) => {
@@ -235,9 +251,13 @@ fn augment_error_message(msg: &str) -> String {
 
 async fn run(cli: Cli) -> Result<()> {
     let cli_sqlite_path_override = cli.database_sqlite_path.clone();
+    let agent = cli.agent;
 
     // Commands that don't need DB
     match &cli.command {
+        Commands::Scopes(commands::scopes::ScopesCommands::Detect(ref args)) => {
+            return commands::scopes::run_detect(args.clone(), cli.json);
+        }
         Commands::Instructions(args) => {
             return commands::instructions::run(args, cli.json);
         }
@@ -292,21 +312,23 @@ async fn run(cli: Cli) -> Result<()> {
     config = config.merge_from_env();
     config = cli.cli_config_overrides().apply_to_config(config);
 
-    let db_path = config
-        .resolve_db_path(cli.db.as_deref(), cli_sqlite_path_override.as_deref())
-        .path;
-    let pool = open_pool(&db_path).await?;
+    // Resolve DB path (handles --db, VOIDM_DB, --database-sqlite-path overrides)
+    let resolved = config.resolve_db_path(cli.db.as_deref(), cli_sqlite_path_override.as_deref());
+    config.database.sqlite_path = resolved.path.to_string_lossy().into_owned();
 
-    // Run migrations
-    voidm_core::migrate::run(&pool).await?;
+    // Open backend-agnostic database
+    let db: Arc<dyn voidm_core::db::Database> = DbPool::open(&config.database).await?;
 
-    // Clean up stale reembed temp table
-    let _ = voidm_core::vector::cleanup_stale_temp_table(&pool).await;
+    // Run migrations (SQLite only)
+    if let Some(pool) = db.sqlite_pool() {
+        voidm_core::migrate::run(pool).await?;
+        let _ = voidm_core::vector::cleanup_stale_temp_table(pool).await;
+    }
 
     // Check model mismatch
     if config.embeddings.enabled {
         if let Ok(Some((db_model, db_dim))) =
-            voidm_core::crud::check_model_mismatch(&pool, &config.embeddings.model).await
+            db.check_model_mismatch(&config.embeddings.model).await
         {
             eprintln!(
                 "Warning: configured model '{}' differs from DB model '{}' (dim {}). \
@@ -317,26 +339,37 @@ async fn run(cli: Cli) -> Result<()> {
     }
 
     match cli.command {
-        Commands::Add(args) => commands::add::run(args, &pool, &config, cli.json).await,
-        Commands::Get(args) => commands::get::run(args, &pool, cli.json).await,
-        Commands::Search(args) => commands::search::run(args, &pool, &config, cli.json).await,
-        Commands::Learn(cmd) => commands::learn::run(cmd, &pool, &config, cli.json).await,
-        Commands::List(args) => commands::list::run(args, &pool, &config, cli.json).await,
-        Commands::Delete(args) => commands::delete::run(args, &pool, cli.json).await,
-        Commands::Link(args) => commands::link::run(args, &pool, cli.json).await,
-        Commands::Unlink(args) => commands::unlink::run(args, &pool, cli.json).await,
-        Commands::Graph(cmd) => commands::graph::run(cmd, &pool, cli.json).await,
-        Commands::Ontology(cmd) => commands::ontology::run(cmd, &pool, &config, cli.json).await,
-        Commands::Conflicts(cmd) => commands::conflicts::run(cmd, &pool, cli.json).await,
-        Commands::Scopes(cmd) => commands::scopes::run(cmd, &pool, cli.json).await,
-        Commands::Export(args) => commands::export::run(args, &pool, &config, cli.json).await,
+        Commands::Add(args) => commands::add::run(args, &db, &config, cli.json).await,
+        Commands::Get(args) => commands::get::run(args, &db, cli.json).await,
+        Commands::Search(args) => commands::search::run(args, &db, &config, cli.json).await,
+        Commands::Learn(cmd) => commands::learn::run(cmd, &db, &config, cli.json).await,
+        Commands::List(args) => commands::list::run(args, &db, &config, cli.json).await,
+        Commands::Delete(args) => commands::delete::run(args, &db, cli.json).await,
+        Commands::Link(args) => commands::link::run(args, &db, cli.json).await,
+        Commands::Unlink(args) => commands::unlink::run(args, &db, cli.json).await,
+        Commands::Graph(cmd) => commands::graph::run(cmd, &db, cli.json).await,
+        Commands::Ontology(cmd) => commands::ontology::run(cmd, &db, &config, cli.json).await,
+        Commands::Conflicts(cmd) => commands::conflicts::run(cmd, &db, cli.json).await,
+        Commands::Scopes(cmd) => commands::scopes::run(cmd, &db, cli.json).await,
+        Commands::Export(args) => commands::export::run(args, &db, &config, cli.json).await,
         Commands::Config(_) => unreachable!(),
-        Commands::Models(cmd) => commands::models::run(cmd, &pool, &config, cli.json).await,
+        Commands::Models(cmd) => commands::models::run(cmd, &db, &config, cli.json).await,
         Commands::Instructions(_) => unreachable!(),
         Commands::Info(_) => unreachable!(),
         Commands::Init(_) => unreachable!(),
         Commands::Migrate(_) => unreachable!(),
         Commands::CheckUpdate(_) => unreachable!(),
-        Commands::Stats(args) => commands::stats::run(args, &pool, &config, cli.json).await,
+        Commands::Stats(args) => commands::stats::run(args, &db, &config, cli.json).await,
+        Commands::Update(args) => {
+            commands::mem_update::run(args, &db, &config, cli.json, agent).await
+        }
+        Commands::Recall(args) => {
+            commands::recall::run(args, &db, &config, cli.json, agent).await
+        }
+        Commands::Stale(args) => commands::stale::run(args, &db, cli.json).await,
+        Commands::BatchAdd(args) => {
+            commands::batch_add::run(args, &db, &config, cli.json).await
+        }
+        Commands::Why(args) => commands::why::run(args, &db, cli.json).await,
     }
 }

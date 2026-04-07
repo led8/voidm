@@ -1,4 +1,5 @@
 pub mod auto_tagger;
+pub mod chunking;
 pub mod config;
 pub mod config_loader;
 pub mod crud;
@@ -29,7 +30,8 @@ pub use config::{
     codex_sandbox_db_path, config_path_display, is_codex_sandbox_active, Config, DbPathResolution,
     DbPathSource,
 };
-pub use crud::resolve_id;
+pub use crud::{find_contradicts_among, get_edges_for_memory, resolve_id, update_memory, UpdateMemoryPatch};
+pub use search::compute_age_days;
 pub use db::sqlite::open_pool; // Re-export for backward compatibility
 pub use models::{
     AddMemoryRequest, AddMemoryResponse, DuplicateWarning, Memory, MemoryEdge, MemoryType,

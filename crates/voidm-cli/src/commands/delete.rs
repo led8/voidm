@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Args;
-use sqlx::SqlitePool;
-use voidm_core::{crud, resolve_id};
+use std::sync::Arc;
+use voidm_core::{crud, db::Database, resolve_id};
 
 #[derive(Args)]
 pub struct DeleteArgs {
@@ -12,7 +12,8 @@ pub struct DeleteArgs {
     pub yes: bool,
 }
 
-pub async fn run(args: DeleteArgs, pool: &SqlitePool, json: bool) -> Result<()> {
+pub async fn run(args: DeleteArgs, db: &Arc<dyn Database>, json: bool) -> Result<()> {
+    let pool = db.sqlite_pool().expect("SQLite backend required");
     let id = match resolve_id(pool, &args.id).await {
         Ok(id) => id,
         Err(e) => {

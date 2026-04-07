@@ -207,6 +207,31 @@ pub trait Database: Send + Sync {
         &self,
         configured_model: &str,
     ) -> Pin<Box<dyn Future<Output = Result<Option<(String, String)>>> + Send + '_>>;
+
+    // ===== F5 additions =====
+
+    /// Return the underlying SQLite pool, if this is a SQLite backend.
+    /// Returns None for non-SQLite backends. Used as an escape hatch for
+    /// SQLite-only operations (graph traversal, vector re-embedding, etc.).
+    fn sqlite_pool(&self) -> Option<&sqlx::SqlitePool> {
+        None
+    }
+
+    /// Full patch-based memory update (content, type, tags, importance, title, context).
+    fn update_memory_full(
+        &self,
+        id: &str,
+        patch: crate::crud::UpdateMemoryPatch,
+        config: &crate::Config,
+    ) -> Pin<Box<dyn Future<Output = Result<crate::models::Memory>> + Send + '_>>;
+
+    /// List memories with optional scope/type filters.
+    fn list_memories_filtered(
+        &self,
+        scope_filter: Option<String>,
+        type_filter: Option<String>,
+        limit: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<crate::models::Memory>>> + Send + '_>>;
 }
 
 /// Runtime-selected database backend

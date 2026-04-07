@@ -6,6 +6,9 @@ use sqlx::SqlitePool;
 pub async fn run(pool: &SqlitePool) -> Result<()> {
     sqlx::query(SCHEMA).execute(pool).await?;
     upgrade_add_quality_score(pool).await?;
+    upgrade_add_last_accessed_at(pool).await?;
+    upgrade_add_title_context(pool).await?;
+    upgrade_add_chunks(pool).await?;
     Ok(())
 }
 
@@ -25,6 +28,90 @@ async fn upgrade_add_quality_score(pool: &SqlitePool) -> Result<()> {
             .await?;
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_memories_quality_score ON memories(quality_score DESC)",
+        )
+        .execute(pool)
+        .await?;
+    }
+
+    Ok(())
+}
+
+/// Add last_accessed_at column to track when memories were last retrieved.
+async fn upgrade_add_last_accessed_at(pool: &SqlitePool) -> Result<()> {
+    let column_exists: (bool,) = sqlx::query_as(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info('memories') WHERE name = 'last_accessed_at'",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if !column_exists.0 {
+        sqlx::query("ALTER TABLE memories ADD COLUMN last_accessed_at TEXT")
+            .execute(pool)
+            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_memories_last_accessed_at ON memories(last_accessed_at)",
+        )
+        .execute(pool)
+        .await?;
+    }
+
+    Ok(())
+}
+
+/// Add title and context columns to memories table (F1 — voidm-2 port).
+async fn upgrade_add_title_context(pool: &SqlitePool) -> Result<()> {
+    let title_exists: (bool,) = sqlx::query_as(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info('memories') WHERE name = 'title'",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if !title_exists.0 {
+        sqlx::query("ALTER TABLE memories ADD COLUMN title TEXT")
+            .execute(pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_memories_title ON memories(title)")
+            .execute(pool)
+            .await?;
+    }
+
+    let context_exists: (bool,) = sqlx::query_as(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info('memories') WHERE name = 'context'",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if !context_exists.0 {
+        sqlx::query("ALTER TABLE memories ADD COLUMN context TEXT")
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Add chunks table and vec_chunks virtual table for chunk-level embeddings (F3 — voidm-2 port).
+async fn upgrade_add_chunks(pool: &SqlitePool) -> Result<()> {
+    let table_exists: (bool,) = sqlx::query_as(
+        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='chunks'",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if !table_exists.0 {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS chunks (
+                id          TEXT PRIMARY KEY,
+                memory_id   TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                chunk_index INTEGER NOT NULL,
+                content     TEXT NOT NULL,
+                created_at  TEXT NOT NULL
+            )"
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_memory_id ON chunks(memory_id)"
         )
         .execute(pool)
         .await?;

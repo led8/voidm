@@ -112,6 +112,11 @@ mod tests {
             hop_depth: None,
             parent_id: None,
             quality_score: None,
+            age_days: None,
+            title: None,
+            context: None,
+            context_chunks: vec![],
+            content_source: None,
         };
 
         assert_eq!(result.source, "search");

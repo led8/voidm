@@ -16,6 +16,46 @@ pub struct Config {
     pub enrichment: EnrichmentConfig,
     #[serde(default)]
     pub redaction: crate::redactor::RedactionConfig,
+    #[serde(default)]
+    pub chunking: ChunkingConfig,
+}
+
+/// Text chunking configuration for chunk-level embeddings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkingConfig {
+    /// Whether chunk-level embeddings are enabled (default: true).
+    #[serde(default = "default_chunking_enabled")]
+    pub enabled: bool,
+    /// Target chunk size in characters (default: 600).
+    #[serde(default = "default_chunk_size")]
+    pub chunk_size: usize,
+    /// Minimum chunk size in characters — smaller chunks are merged or dropped (default: 150).
+    #[serde(default = "default_chunk_min")]
+    pub chunk_min: usize,
+    /// Maximum chunk size in characters — oversized chunks are split further (default: 900).
+    #[serde(default = "default_chunk_max")]
+    pub chunk_max: usize,
+    /// Overlap between adjacent chunks in characters (default: 100).
+    #[serde(default = "default_chunk_overlap")]
+    pub chunk_overlap: usize,
+}
+
+fn default_chunking_enabled() -> bool { true }
+fn default_chunk_size() -> usize { 600 }
+fn default_chunk_min() -> usize { 150 }
+fn default_chunk_max() -> usize { 900 }
+fn default_chunk_overlap() -> usize { 100 }
+
+impl Default for ChunkingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_chunking_enabled(),
+            chunk_size: default_chunk_size(),
+            chunk_min: default_chunk_min(),
+            chunk_max: default_chunk_max(),
+            chunk_overlap: default_chunk_overlap(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,10 +198,35 @@ pub struct EmbeddingsConfig {
     pub model: String,
 }
 
+/// Per-signal on/off toggles for the unified RRF pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignalsConfig {
+    /// Enable vector ANN signal (default: true).
+    #[serde(default = "default_true")]
+    pub vector: bool,
+    /// Enable BM25 FTS signal (default: true).
+    #[serde(default = "default_true")]
+    pub bm25: bool,
+    /// Enable fuzzy (Jaro-Winkler) signal (default: true).
+    #[serde(default = "default_true")]
+    pub fuzzy: bool,
+}
+
+fn default_true() -> bool { true }
+
+impl Default for SignalsConfig {
+    fn default() -> Self {
+        Self { vector: true, bm25: true, fuzzy: true }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchConfig {
     pub mode: String,
     pub default_limit: usize,
+    /// Per-signal enable/disable for the unified RRF pipeline.
+    #[serde(default)]
+    pub signals: SignalsConfig,
     /// Minimum score threshold for hybrid mode results (0.0–1.0). Default: 0.3.
     pub min_score: f32,
     /// Score decay per hop for graph-expanded neighbors. neighbor_score = parent_score * decay^depth.
@@ -381,6 +446,7 @@ impl Default for SearchConfig {
             reranker: None,
             query_expansion: None,
             graph_retrieval: None,
+            signals: SignalsConfig::default(),
         }
     }
 }
@@ -412,6 +478,7 @@ impl Default for Config {
             insert: Default::default(),
             enrichment: Default::default(),
             redaction: Default::default(),
+            chunking: Default::default(),
         }
     }
 }

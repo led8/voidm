@@ -3,6 +3,7 @@ use sqlx::{SqliteConnection, SqlitePool};
 
 const VECTOR_TABLE_NAME: &str = "vec_memories";
 const LEGACY_REEMBED_TEMP_TABLE_PREFIX: &str = "vec_memories_new";
+const CHUNK_VECTOR_TABLE_NAME: &str = "vec_chunks";
 
 /// Ensure vec_memories virtual table exists with the correct dimension.
 /// Creates it if absent, drops and recreates if dimension mismatches.
@@ -75,6 +76,83 @@ pub async fn ann_search(
     .fetch_all(pool)
     .await
     .context("ANN search failed")?;
+    Ok(rows)
+}
+
+/// Ensure vec_chunks virtual table exists with the correct dimension.
+pub async fn ensure_chunk_vector_table(pool: &SqlitePool, dim: usize) -> Result<()> {
+    let existing: Option<String> =
+        sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?")
+            .bind(CHUNK_VECTOR_TABLE_NAME)
+            .fetch_optional(pool)
+            .await?;
+
+    if let Some(ddl) = existing {
+        let expected = format!("float[{}]", dim);
+        if ddl.to_lowercase().contains(&expected.to_lowercase()) {
+            return Ok(());
+        }
+        // Dimension mismatch: drop and recreate
+        tracing::warn!("vec_chunks dimension mismatch, dropping and recreating");
+        let drop_sql = format!("DROP TABLE IF EXISTS \"{}\"", CHUNK_VECTOR_TABLE_NAME);
+        let _ = sqlx::query(&drop_sql).execute(pool).await;
+    }
+
+    let sql = format!(
+        "CREATE VIRTUAL TABLE {} USING vec0(chunk_id TEXT, embedding float[{}])",
+        quote_sqlite_ident(CHUNK_VECTOR_TABLE_NAME),
+        dim
+    );
+    sqlx::query(&sql)
+        .execute(pool)
+        .await
+        .context("Failed to create vec_chunks virtual table")?;
+    Ok(())
+}
+
+/// Store a chunk embedding.
+pub async fn store_chunk_embedding(pool: &SqlitePool, chunk_id: &str, embedding: &[f32]) -> Result<()> {
+    let bytes = floats_to_bytes(embedding);
+    sqlx::query(
+        "INSERT INTO vec_chunks (chunk_id, embedding) VALUES (?, ?) ON CONFLICT(chunk_id) DO UPDATE SET embedding = excluded.embedding"
+    )
+    .bind(chunk_id)
+    .bind(&bytes)
+    .execute(pool)
+    .await
+    .context("Failed to store chunk embedding")?;
+    Ok(())
+}
+
+/// Delete all chunk embeddings for a memory.
+pub async fn delete_chunk_embeddings(pool: &SqlitePool, memory_id: &str) -> Result<()> {
+    // chunk IDs are "{memory_id}_{index}", so delete matching prefix
+    let pattern = format!("{}_%", memory_id);
+    let _ = sqlx::query("DELETE FROM vec_chunks WHERE chunk_id LIKE ?")
+        .bind(&pattern)
+        .execute(pool)
+        .await;
+    Ok(())
+}
+
+/// ANN search over chunks: returns (chunk_id, distance) pairs, closest first.
+pub async fn chunk_ann_search(
+    pool: &SqlitePool,
+    query_embedding: &[f32],
+    limit: usize,
+) -> Result<Vec<(String, f32)>> {
+    if !sqlite_object_exists(pool, CHUNK_VECTOR_TABLE_NAME).await? {
+        return Ok(vec![]);
+    }
+    let bytes = floats_to_bytes(query_embedding);
+    let rows: Vec<(String, f32)> = sqlx::query_as(
+        "SELECT chunk_id, distance FROM vec_chunks WHERE embedding MATCH ? AND k = ?",
+    )
+    .bind(&bytes)
+    .bind(limit as i64)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
     Ok(rows)
 }
 
@@ -154,6 +232,61 @@ pub async fn reembed_all(
         return Err(err);
     }
 
+    // Rebuild chunk embeddings (best-effort — not fatal if chunks table is absent)
+    if let Err(e) = reembed_chunks(pool, model_name, new_dim, batch_size).await {
+        tracing::warn!("Failed to rebuild chunk embeddings during reembed: {}. Continuing.", e);
+    }
+
+    Ok(())
+}
+
+/// Rebuild vec_chunks for all existing chunk rows.
+async fn reembed_chunks(pool: &SqlitePool, model_name: &str, dim: usize, batch_size: usize) -> Result<()> {
+    use crate::embeddings;
+
+    // Check chunks table exists
+    let table_exists = sqlite_object_exists(pool, "chunks").await?;
+    if !table_exists {
+        return Ok(());
+    }
+
+    let chunks: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, content FROM chunks ORDER BY memory_id, chunk_index")
+            .fetch_all(pool)
+            .await?;
+
+    if chunks.is_empty() {
+        return Ok(());
+    }
+
+    // Drop and recreate vec_chunks
+    let drop_sql = format!("DROP TABLE IF EXISTS \"{}\"", CHUNK_VECTOR_TABLE_NAME);
+    let _ = sqlx::query(&drop_sql).execute(pool).await;
+    let sql = format!(
+        "CREATE VIRTUAL TABLE {} USING vec0(chunk_id TEXT, embedding float[{}])",
+        quote_sqlite_ident(CHUNK_VECTOR_TABLE_NAME),
+        dim
+    );
+    sqlx::query(&sql).execute(pool).await.context("Failed to create vec_chunks during reembed")?;
+
+    let total = chunks.len();
+    tracing::info!("Re-embedding {} chunks with {}", total, model_name);
+
+    for batch in chunks.chunks(batch_size) {
+        let contents: Vec<String> = batch.iter().map(|(_, c)| c.clone()).collect();
+        let embeddings = embeddings::embed_batch(model_name, &contents)?;
+        for ((chunk_id, _), emb) in batch.iter().zip(embeddings.iter()) {
+            let bytes = floats_to_bytes(emb);
+            sqlx::query("INSERT INTO vec_chunks (chunk_id, embedding) VALUES (?, ?)")
+                .bind(chunk_id)
+                .bind(&bytes)
+                .execute(pool)
+                .await
+                .with_context(|| format!("Failed to store chunk embedding for '{}'", chunk_id))?;
+        }
+    }
+
+    tracing::info!("Chunk re-embedding complete");
     Ok(())
 }
 
@@ -493,6 +626,8 @@ mod tests {
                 importance: 5,
                 metadata: serde_json::json!({}),
                 links: vec![],
+                title: None,
+                context: None,
             },
             &config,
         )
