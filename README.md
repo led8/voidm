@@ -40,7 +40,6 @@ Implementation notes for the learning-tip layer live in [docs/TRAJECTORY_LEARNIN
 ## Installation
 
 ```bash
-git clone https://github.com/autonomous-toaster/voidm
 cd voidm
 cargo install --path crates/voidm-cli
 ```
