@@ -1,12 +1,7 @@
 use anyhow::Result;
 use clap::Args;
 use std::sync::Arc;
-use voidm_core::{
-    crud::UpdateMemoryPatch,
-    db::Database,
-    models::MemoryType,
-    Config,
-};
+use voidm_core::{crud::UpdateMemoryPatch, db::Database, models::MemoryType, Config};
 
 #[derive(Args)]
 pub struct UpdateMemoryArgs {
@@ -45,11 +40,7 @@ pub async fn run(
     json: bool,
     agent: bool,
 ) -> Result<()> {
-    let memory_type: Option<MemoryType> = args
-        .r#type
-        .as_deref()
-        .map(|t| t.parse())
-        .transpose()?;
+    let memory_type: Option<MemoryType> = args.r#type.as_deref().map(|t| t.parse()).transpose()?;
 
     let tags: Option<Vec<String>> = args.tags.map(|t| {
         t.split(',')

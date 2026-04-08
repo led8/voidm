@@ -2,7 +2,8 @@ use anyhow::Result;
 use clap::Args;
 use std::sync::Arc;
 use voidm_core::{
-    crud, db::Database,
+    crud,
+    db::Database,
     models::{AddMemoryRequest, EdgeType, LinkSpec, MemoryType},
     Config,
 };

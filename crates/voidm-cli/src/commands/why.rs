@@ -54,7 +54,10 @@ pub async fn run(args: WhyArgs, db: &Arc<dyn Database>, json: bool) -> Result<()
         println!("  Type:       {}", memory.memory_type);
         println!("  Importance: {}/10", memory.importance);
         if let Some(days) = age_days {
-            println!("  Age:        {} days (created {})", days, memory.created_at);
+            println!(
+                "  Age:        {} days (created {})",
+                days, memory.created_at
+            );
         } else {
             println!("  Created:    {}", memory.created_at);
         }

@@ -10,7 +10,12 @@ pub struct StatsArgs {
     pub scope: Option<String>,
 }
 
-pub async fn run(args: StatsArgs, db: &Arc<dyn Database>, config: &Config, json: bool) -> Result<()> {
+pub async fn run(
+    args: StatsArgs,
+    db: &Arc<dyn Database>,
+    config: &Config,
+    json: bool,
+) -> Result<()> {
     let pool = db.sqlite_pool().expect("SQLite backend required");
     let scope = args.scope.as_deref();
 
@@ -74,7 +79,15 @@ pub async fn run(args: StatsArgs, db: &Arc<dyn Database>, config: &Config, json:
             .unwrap_or(None);
             let (oldest, newest) = ages.flatten_tuple();
 
-            (total, by_type, scope_count, all_tags, vec_count, oldest, newest)
+            (
+                total,
+                by_type,
+                scope_count,
+                all_tags,
+                vec_count,
+                oldest,
+                newest,
+            )
         } else {
             let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories")
                 .fetch_one(pool)
@@ -111,7 +124,15 @@ pub async fn run(args: StatsArgs, db: &Arc<dyn Database>, config: &Config, json:
             .unwrap_or(None);
             let (oldest, newest) = ages.flatten_tuple();
 
-            (total, by_type, scope_count, all_tags, vec_count, oldest, newest)
+            (
+                total,
+                by_type,
+                scope_count,
+                all_tags,
+                vec_count,
+                oldest,
+                newest,
+            )
         };
 
     // Tag counts (top 10)

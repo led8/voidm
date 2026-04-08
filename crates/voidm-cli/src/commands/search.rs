@@ -101,7 +101,12 @@ pub struct SearchArgs {
     pub verbose: bool,
 }
 
-pub async fn run(args: SearchArgs, db: &Arc<dyn Database>, config: &Config, json: bool) -> Result<()> {
+pub async fn run(
+    args: SearchArgs,
+    db: &Arc<dyn Database>,
+    config: &Config,
+    json: bool,
+) -> Result<()> {
     let pool = db.sqlite_pool().expect("SQLite backend required");
     let mode: SearchMode = args.mode.parse()?;
 
@@ -271,7 +276,9 @@ pub async fn run(args: SearchArgs, db: &Arc<dyn Database>, config: &Config, json
             }
         } else {
             let ids: Vec<String> = resp.results.iter().map(|r| r.id.clone()).collect();
-            let conflicts = voidm_core::find_contradicts_among(pool, &ids).await.unwrap_or_default();
+            let conflicts = voidm_core::find_contradicts_among(pool, &ids)
+                .await
+                .unwrap_or_default();
             let conflict_json: Vec<serde_json::Value> = conflicts
                 .iter()
                 .map(|(_, from_id, to_id, note)| {

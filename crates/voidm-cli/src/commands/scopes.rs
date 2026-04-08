@@ -104,7 +104,9 @@ fn try_git_remote_name(git_root: &std::path::Path) -> Option<String> {
                 break; // left the section
             }
             if let Some(rest) = trimmed.strip_prefix("url") {
-                let url = rest.trim_start_matches(|c: char| c == ' ' || c == '=').trim();
+                let url = rest
+                    .trim_start_matches(|c: char| c == ' ' || c == '=')
+                    .trim();
                 return repo_name_from_url(url);
             }
         }
@@ -129,7 +131,13 @@ fn repo_name_from_url(url: &str) -> Option<String> {
 fn normalize_scope(s: &str) -> String {
     let normalized: String = s
         .chars()
-        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
     normalized.trim_matches('-').to_string()
 }

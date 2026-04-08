@@ -18,7 +18,12 @@ pub struct ListArgs {
     pub limit: usize,
 }
 
-pub async fn run(args: ListArgs, db: &Arc<dyn Database>, _config: &Config, json: bool) -> Result<()> {
+pub async fn run(
+    args: ListArgs,
+    db: &Arc<dyn Database>,
+    _config: &Config,
+    json: bool,
+) -> Result<()> {
     let pool = db.sqlite_pool().expect("SQLite backend required");
     let memories = crud::list_memories(
         pool,

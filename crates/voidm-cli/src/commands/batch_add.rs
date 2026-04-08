@@ -34,7 +34,12 @@ pub struct BatchAddArgs {
     pub from: String,
 }
 
-pub async fn run(args: BatchAddArgs, db: &Arc<dyn Database>, config: &Config, json: bool) -> Result<()> {
+pub async fn run(
+    args: BatchAddArgs,
+    db: &Arc<dyn Database>,
+    config: &Config,
+    json: bool,
+) -> Result<()> {
     let pool = db.sqlite_pool().expect("SQLite backend required");
     let raw = std::fs::read_to_string(&args.from)
         .with_context(|| format!("Failed to read batch file '{}'", args.from))?;
@@ -58,7 +63,11 @@ pub async fn run(args: BatchAddArgs, db: &Arc<dyn Database>, config: &Config, js
             .parse::<MemoryType>()
             .with_context(|| format!("Entry {}: invalid type '{}'", i, entry.memory_type))?;
         if !(1..=10).contains(&entry.importance) {
-            anyhow::bail!("Entry {}: importance {} is out of range (1–10)", i, entry.importance);
+            anyhow::bail!(
+                "Entry {}: importance {} is out of range (1–10)",
+                i,
+                entry.importance
+            );
         }
         if entry.content.trim().is_empty() {
             anyhow::bail!("Entry {}: content must not be empty", i);

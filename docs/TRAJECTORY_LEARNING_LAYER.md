@@ -1,5 +1,7 @@
 # Trajectory-Informed Learning Layer
 
+For the broader repository map, start with the [documentation index](index.md).
+
 Phase 1 adds a structured learning-tip layer on top of existing `voidm` memories without changing the storage model.
 Phase 2 adds trajectory ingestion for coding-agent runs so `voidm` can extract candidate learning tips from structured run traces.
 Phase 3 adds consolidation so overlapping tips can be clustered into canonical learning records instead of accumulating as near-duplicates.
@@ -136,4 +138,4 @@ The learning layer still does not implement:
 - feedback-driven reprioritization
 - automatic ingestion from live agent runtimes or streams
 
-Those belong to later phases from the approved backlog plan.
+Those belong to later phases of the learning roadmap.

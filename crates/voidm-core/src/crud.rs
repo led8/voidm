@@ -153,7 +153,11 @@ pub async fn add_memory(
 
     // Truncate title to 200 chars if provided
     let title = req.title.as_deref().map(|t| {
-        if t.len() > 200 { t[..200].to_string() } else { t.to_string() }
+        if t.len() > 200 {
+            t[..200].to_string()
+        } else {
+            t.to_string()
+        }
     });
 
     // Insert memory with persistent quality_score
@@ -1042,13 +1046,11 @@ pub async fn update_memory(
     // Update embedding if content changed
     if let Some(ref emb) = new_embedding {
         let bytes: Vec<u8> = emb.iter().flat_map(|f| f.to_le_bytes()).collect();
-        sqlx::query(
-            "INSERT OR REPLACE INTO vec_memories (memory_id, embedding) VALUES (?, ?)",
-        )
-        .bind(&full_id)
-        .bind(&bytes)
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("INSERT OR REPLACE INTO vec_memories (memory_id, embedding) VALUES (?, ?)")
+            .bind(&full_id)
+            .bind(&bytes)
+            .execute(&mut *tx)
+            .await?;
     }
 
     // Update graph node property for memory_type if type changed
@@ -1078,8 +1080,13 @@ pub async fn update_memory(
         let _ = delete_chunks(pool, &full_id).await;
         let chunks = chunking::chunk_text(&new_content, &config.chunking);
         if chunks.len() > 1 {
-            if let Err(e) = store_chunks(pool, &full_id, &chunks, &config.embeddings.model, &now).await {
-                tracing::warn!("Failed to re-store chunk embeddings on update: {}. Continuing.", e);
+            if let Err(e) =
+                store_chunks(pool, &full_id, &chunks, &config.embeddings.model, &now).await
+            {
+                tracing::warn!(
+                    "Failed to re-store chunk embeddings on update: {}. Continuing.",
+                    e
+                );
             }
         }
     }

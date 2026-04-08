@@ -106,15 +106,13 @@ async fn upgrade_add_chunks(pool: &SqlitePool) -> Result<()> {
                 chunk_index INTEGER NOT NULL,
                 content     TEXT NOT NULL,
                 created_at  TEXT NOT NULL
-            )"
+            )",
         )
         .execute(pool)
         .await?;
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_chunks_memory_id ON chunks(memory_id)"
-        )
-        .execute(pool)
-        .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_memory_id ON chunks(memory_id)")
+            .execute(pool)
+            .await?;
     }
 
     Ok(())

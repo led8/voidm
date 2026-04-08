@@ -3,8 +3,8 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 use cli_config::CliConfigOverrides;
-use voidm_cli::{cli_config, commands};
 use std::sync::Arc;
+use voidm_cli::{cli_config, commands};
 use voidm_core::{db::DbPool, Config};
 
 #[derive(Parser)]
@@ -363,13 +363,9 @@ async fn run(cli: Cli) -> Result<()> {
         Commands::Update(args) => {
             commands::mem_update::run(args, &db, &config, cli.json, agent).await
         }
-        Commands::Recall(args) => {
-            commands::recall::run(args, &db, &config, cli.json, agent).await
-        }
+        Commands::Recall(args) => commands::recall::run(args, &db, &config, cli.json, agent).await,
         Commands::Stale(args) => commands::stale::run(args, &db, cli.json).await,
-        Commands::BatchAdd(args) => {
-            commands::batch_add::run(args, &db, &config, cli.json).await
-        }
+        Commands::BatchAdd(args) => commands::batch_add::run(args, &db, &config, cli.json).await,
         Commands::Why(args) => commands::why::run(args, &db, cli.json).await,
     }
 }

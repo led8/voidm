@@ -213,9 +213,17 @@ mod tests {
 
         let content = "Alpha beta gamma. ".repeat(50);
         let chunks = chunk_text(&content, &config);
-        assert!(chunks.len() > 1, "Expected multiple chunks, got {}", chunks.len());
+        assert!(
+            chunks.len() > 1,
+            "Expected multiple chunks, got {}",
+            chunks.len()
+        );
         for c in &chunks {
-            assert!(c.len() <= config.chunk_max + 50, "Chunk too long: {}", c.len());
+            assert!(
+                c.len() <= config.chunk_max + 50,
+                "Chunk too long: {}",
+                c.len()
+            );
         }
     }
 }

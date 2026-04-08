@@ -53,7 +53,12 @@ pub struct ExportMetadata {
     pub scopes_included: Vec<String>,
 }
 
-pub async fn run(args: ExportArgs, db: &Arc<dyn Database>, _config: &Config, _json: bool) -> Result<()> {
+pub async fn run(
+    args: ExportArgs,
+    db: &Arc<dyn Database>,
+    _config: &Config,
+    _json: bool,
+) -> Result<()> {
     let pool = db.sqlite_pool().expect("SQLite backend required");
 
     let memories = crud::list_memories(pool, args.scope.as_deref(), None, args.limit).await?;

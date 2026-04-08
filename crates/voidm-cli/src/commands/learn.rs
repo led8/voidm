@@ -4,6 +4,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use voidm_core::{
     crud,
+    db::Database,
     learning::{
         apply_learning_consolidation, consolidate_learning_tips, default_memory_type_for_learning,
         extract_learning_candidates, memory_to_learning_record, parse_learning_trajectories,
@@ -12,7 +13,6 @@ use voidm_core::{
         LearningSearchRequest, LearningSearchResponse, LearningSourceOutcome, LearningTip,
         LearningTipCategory, LEARNING_TIP_VERSION,
     },
-    db::Database,
     models::{AddMemoryRequest, AddMemoryResponse, EdgeType, LinkSpec, MemoryType},
     resolve_id,
     search::SearchMode,
@@ -256,7 +256,12 @@ struct LearnConsolidateResponse {
     pub results: Vec<LearnConsolidateResult>,
 }
 
-pub async fn run(cmd: LearnCommands, db: &Arc<dyn Database>, config: &Config, json: bool) -> Result<()> {
+pub async fn run(
+    cmd: LearnCommands,
+    db: &Arc<dyn Database>,
+    config: &Config,
+    json: bool,
+) -> Result<()> {
     let pool = db.sqlite_pool().expect("SQLite backend required");
     match cmd {
         LearnCommands::Add(args) => run_add(args, pool, config, json).await,
@@ -366,9 +371,10 @@ async fn run_ingest(
             .context("Failed to read trajectory JSON from stdin")?;
         buf
     } else {
-        let path = args.from.as_deref().ok_or_else(|| {
-            anyhow::anyhow!("Provide either --from <file> or --stdin")
-        })?;
+        let path = args
+            .from
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Provide either --from <file> or --stdin"))?;
         std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read trajectory file '{}'", path))?
     };

@@ -111,7 +111,11 @@ pub async fn ensure_chunk_vector_table(pool: &SqlitePool, dim: usize) -> Result<
 }
 
 /// Store a chunk embedding.
-pub async fn store_chunk_embedding(pool: &SqlitePool, chunk_id: &str, embedding: &[f32]) -> Result<()> {
+pub async fn store_chunk_embedding(
+    pool: &SqlitePool,
+    chunk_id: &str,
+    embedding: &[f32],
+) -> Result<()> {
     let bytes = floats_to_bytes(embedding);
     sqlx::query(
         "INSERT INTO vec_chunks (chunk_id, embedding) VALUES (?, ?) ON CONFLICT(chunk_id) DO UPDATE SET embedding = excluded.embedding"
@@ -234,14 +238,22 @@ pub async fn reembed_all(
 
     // Rebuild chunk embeddings (best-effort — not fatal if chunks table is absent)
     if let Err(e) = reembed_chunks(pool, model_name, new_dim, batch_size).await {
-        tracing::warn!("Failed to rebuild chunk embeddings during reembed: {}. Continuing.", e);
+        tracing::warn!(
+            "Failed to rebuild chunk embeddings during reembed: {}. Continuing.",
+            e
+        );
     }
 
     Ok(())
 }
 
 /// Rebuild vec_chunks for all existing chunk rows.
-async fn reembed_chunks(pool: &SqlitePool, model_name: &str, dim: usize, batch_size: usize) -> Result<()> {
+async fn reembed_chunks(
+    pool: &SqlitePool,
+    model_name: &str,
+    dim: usize,
+    batch_size: usize,
+) -> Result<()> {
     use crate::embeddings;
 
     // Check chunks table exists
@@ -267,7 +279,10 @@ async fn reembed_chunks(pool: &SqlitePool, model_name: &str, dim: usize, batch_s
         quote_sqlite_ident(CHUNK_VECTOR_TABLE_NAME),
         dim
     );
-    sqlx::query(&sql).execute(pool).await.context("Failed to create vec_chunks during reembed")?;
+    sqlx::query(&sql)
+        .execute(pool)
+        .await
+        .context("Failed to create vec_chunks during reembed")?;
 
     let total = chunks.len();
     tracing::info!("Re-embedding {} chunks with {}", total, model_name);

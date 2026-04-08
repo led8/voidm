@@ -139,17 +139,27 @@ pub async fn search(
     let sig = &config_search.signals;
     let use_vector = embeddings_enabled
         && sig.vector
-        && matches!(opts.mode, SearchMode::Hybrid | SearchMode::HybridRRF | SearchMode::Semantic)
+        && matches!(
+            opts.mode,
+            SearchMode::Hybrid | SearchMode::HybridRRF | SearchMode::Semantic
+        )
         && crate::vector::vec_table_exists(pool).await.unwrap_or(false);
     let use_bm25 = sig.bm25
-        && matches!(opts.mode, SearchMode::Hybrid | SearchMode::HybridRRF | SearchMode::Bm25 | SearchMode::Keyword);
+        && matches!(
+            opts.mode,
+            SearchMode::Hybrid | SearchMode::HybridRRF | SearchMode::Bm25 | SearchMode::Keyword
+        );
     let use_fuzzy = sig.fuzzy
-        && matches!(opts.mode, SearchMode::Hybrid | SearchMode::HybridRRF | SearchMode::Fuzzy);
+        && matches!(
+            opts.mode,
+            SearchMode::Hybrid | SearchMode::HybridRRF | SearchMode::Fuzzy
+        );
 
     let mut vector_results: Vec<(String, f32)> = Vec::new();
     let mut bm25_results: Vec<(String, f32)> = Vec::new();
     let mut fuzzy_results: Vec<(String, f32)> = Vec::new();
-    let mut chunk_hits: std::collections::HashMap<String, (f32, Vec<String>)> = std::collections::HashMap::new();
+    let mut chunk_hits: std::collections::HashMap<String, (f32, Vec<String>)> =
+        std::collections::HashMap::new();
 
     // --- Vector ANN ---
     if use_vector {
@@ -159,18 +169,23 @@ pub async fn search(
                     let sim = 1.0 - (dist / 2.0).clamp(0.0, 1.0);
                     vector_results.push((id, sim));
                 }
-                vector_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                vector_results
+                    .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             }
             // Chunk ANN: inject as extra vector-level hits + populate chunk_hits
-            if let Ok(chunk_results) = crate::vector::chunk_ann_search(pool, &embedding, fetch_limit).await {
-                let mut dummy: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
+            if let Ok(chunk_results) =
+                crate::vector::chunk_ann_search(pool, &embedding, fetch_limit).await
+            {
+                let mut dummy: std::collections::HashMap<String, f32> =
+                    std::collections::HashMap::new();
                 collect_chunk_hits(pool, chunk_results, &mut dummy, &mut chunk_hits, 0.15).await;
                 for (mem_id, (sim, _)) in &chunk_hits {
                     if !vector_results.iter().any(|(id, _)| id == mem_id) {
                         vector_results.push((mem_id.clone(), sim * 0.8));
                     }
                 }
-                vector_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                vector_results
+                    .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             }
         }
     }
@@ -199,10 +214,11 @@ pub async fn search(
     // --- Fuzzy (Jaro-Winkler) ---
     if use_fuzzy {
         if let Ok(all) = sqlx::query_as::<_, (String, String)>(
-            "SELECT id, content FROM memories ORDER BY created_at DESC LIMIT 500"
+            "SELECT id, content FROM memories ORDER BY created_at DESC LIMIT 500",
         )
         .fetch_all(pool)
-        .await {
+        .await
+        {
             let q = opts.query.to_lowercase();
             for (id, content) in all {
                 let sim = strsim::jaro_winkler(&q, &content.to_lowercase()) as f32;
@@ -210,19 +226,30 @@ pub async fn search(
                     fuzzy_results.push((id, sim));
                 }
             }
-            fuzzy_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            fuzzy_results
+                .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         }
     }
 
     // Assemble signals for RRF
     let mut signals: Vec<(&str, Vec<(String, f32)>)> = Vec::new();
-    if !vector_results.is_empty() { signals.push(("vector", vector_results)); }
-    if !bm25_results.is_empty()   { signals.push(("bm25",   bm25_results)); }
-    if !fuzzy_results.is_empty()  { signals.push(("fuzzy",  fuzzy_results)); }
+    if !vector_results.is_empty() {
+        signals.push(("vector", vector_results));
+    }
+    if !bm25_results.is_empty() {
+        signals.push(("bm25", bm25_results));
+    }
+    if !fuzzy_results.is_empty() {
+        signals.push(("fuzzy", fuzzy_results));
+    }
 
     if signals.is_empty() {
         let memories = fetch_memories_newest(pool, opts).await?;
-        return Ok(SearchResponse { results: memories, threshold_applied: None, best_score: None });
+        return Ok(SearchResponse {
+            results: memories,
+            threshold_applied: None,
+            best_score: None,
+        });
     }
 
     // RRF fusion
@@ -235,14 +262,20 @@ pub async fn search(
     for rrf_result in fused.iter().take(opts.limit * 2) {
         if let Some(m) = fetch_memory_by_id(pool, &rrf_result.id).await? {
             if let Some(ref scope) = opts.scope_filter {
-                if !m.scopes.iter().any(|s| s.starts_with(scope.as_str())) { continue; }
+                if !m.scopes.iter().any(|s| s.starts_with(scope.as_str())) {
+                    continue;
+                }
             }
             if let Some(ref t) = opts.type_filter {
-                if m.memory_type != *t { continue; }
+                if m.memory_type != *t {
+                    continue;
+                }
             }
             let age = compute_age_days(&m.created_at);
             if let (Some(max), Some(age_val)) = (opts.max_age_days, age) {
-                if age_val > max { continue; }
+                if age_val > max {
+                    continue;
+                }
             }
 
             let importance_boost = (m.importance as f32 - 5.0) * 0.02;
@@ -250,7 +283,8 @@ pub async fn search(
             let final_score = rrf_result.rrf_score + importance_boost + tb;
             best_score = Some(best_score.unwrap_or(final_score).max(final_score));
 
-            let (ctx_chunks, content_src) = chunk_hits.remove(&rrf_result.id)
+            let (ctx_chunks, content_src) = chunk_hits
+                .remove(&rrf_result.id)
                 .map(|(_, chunks)| (chunks, Some("chunk".to_string())))
                 .unwrap_or_default();
 
@@ -276,10 +310,16 @@ pub async fn search(
                 content_source: content_src,
             });
 
-            if results.len() >= opts.limit { break; }
+            if results.len() >= opts.limit {
+                break;
+            }
         }
     }
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // Apply reranker if enabled (before quality/threshold filters)
     if let Some(reranker_config) = &config_search.reranker {
@@ -331,22 +371,56 @@ pub async fn search(
         results.retain(|r| r.quality_score.unwrap_or(0.0) >= min_quality);
     }
 
-    // Apply threshold — only in hybrid modes
-    let threshold_applied = if matches!(opts.mode, SearchMode::Hybrid | SearchMode::HybridRRF) {
-        let threshold = opts.min_score.unwrap_or(config_min_score);
-        let before_count = results.len();
-        results.retain(|r| r.score >= threshold);
-        if results.len() < before_count { Some(threshold) } else { None }
-    } else {
-        None
-    };
+    let threshold_applied = apply_score_threshold(
+        &mut results,
+        &opts.mode,
+        opts.min_score,
+        config_min_score,
+        best_score,
+    );
 
     if opts.include_neighbors {
         expand_neighbors(pool, &mut results, opts, config_search).await?;
     }
 
     tracing::info!("Search: Returning {} results", results.len());
-    Ok(SearchResponse { results, threshold_applied, best_score })
+    Ok(SearchResponse {
+        results,
+        threshold_applied,
+        best_score,
+    })
+}
+
+fn apply_score_threshold(
+    results: &mut Vec<SearchResult>,
+    mode: &SearchMode,
+    explicit_min_score: Option<f32>,
+    config_min_score: f32,
+    best_score: Option<f32>,
+) -> Option<f32> {
+    if !matches!(mode, SearchMode::Hybrid | SearchMode::HybridRRF) {
+        return None;
+    }
+
+    let threshold = explicit_min_score.unwrap_or(config_min_score);
+    if threshold <= 0.0 {
+        return None;
+    }
+
+    // Older configs commonly carry a 0.3 threshold from the pre-RRF weighted-score model.
+    // When the best RRF score does not reach that bar, returning no results is worse than
+    // returning the ranked candidates the engine already found.
+    if explicit_min_score.is_none() && best_score.is_some_and(|score| score < threshold) {
+        return None;
+    }
+
+    let before_count = results.len();
+    results.retain(|r| r.score >= threshold);
+    if results.len() < before_count {
+        Some(threshold)
+    } else {
+        None
+    }
 }
 
 /// Expand search results with graph neighbors in-place.
@@ -518,12 +592,11 @@ async fn collect_chunk_hits(
         }
         if entry.1.len() < 2 {
             // Fetch chunk content
-            if let Ok(Some(content)) = sqlx::query_scalar::<_, String>(
-                "SELECT content FROM chunks WHERE id = ?"
-            )
-            .bind(&chunk_id)
-            .fetch_optional(pool)
-            .await
+            if let Ok(Some(content)) =
+                sqlx::query_scalar::<_, String>("SELECT content FROM chunks WHERE id = ?")
+                    .bind(&chunk_id)
+                    .fetch_optional(pool)
+                    .await
             {
                 entry.1.push(content);
             }
@@ -537,10 +610,7 @@ pub fn compute_age_days(created_at: &str) -> Option<u32> {
     // Parse the RFC3339 timestamp by finding the seconds since epoch
     // Simple approach: parse up to second precision manually
     let ts = chrono::DateTime::parse_from_rfc3339(created_at).ok()?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()?
-        .as_secs() as i64;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
     let created_secs = ts.timestamp();
     let diff = now.saturating_sub(created_secs);
     Some((diff / 86400) as u32)
@@ -567,6 +637,85 @@ fn sanitize_fts_query(q: &str) -> String {
     // FTS5 requires quoting special chars; simple approach: wrap in quotes
     let cleaned: String = q.chars().map(|c| if c == '"' { ' ' } else { c }).collect();
     format!("\"{}\"", cleaned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result(score: f32) -> SearchResult {
+        SearchResult {
+            id: format!("id-{score}"),
+            score,
+            memory_type: "semantic".to_string(),
+            content: "content".to_string(),
+            scopes: vec!["scope".to_string()],
+            tags: vec![],
+            importance: 5,
+            created_at: "2026-04-08T00:00:00+00:00".to_string(),
+            source: "search".to_string(),
+            rel_type: None,
+            direction: None,
+            hop_depth: None,
+            parent_id: None,
+            quality_score: Some(1.0),
+            age_days: Some(0),
+            title: None,
+            context: None,
+            context_chunks: vec![],
+            content_source: Some("memory".to_string()),
+        }
+    }
+
+    #[test]
+    fn hybrid_ignores_legacy_config_threshold_when_all_scores_are_below_it() {
+        let mut results = vec![result(0.12), result(0.08)];
+
+        let applied =
+            apply_score_threshold(&mut results, &SearchMode::Hybrid, None, 0.3, Some(0.12));
+
+        assert_eq!(applied, None);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn hybrid_keeps_explicit_threshold_behavior() {
+        let mut results = vec![result(0.12), result(0.08)];
+
+        let applied = apply_score_threshold(
+            &mut results,
+            &SearchMode::Hybrid,
+            Some(0.3),
+            0.0,
+            Some(0.12),
+        );
+
+        assert_eq!(applied, Some(0.3));
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn hybrid_filters_when_results_clear_the_config_threshold() {
+        let mut results = vec![result(0.35), result(0.08)];
+
+        let applied =
+            apply_score_threshold(&mut results, &SearchMode::Hybrid, None, 0.3, Some(0.35));
+
+        assert_eq!(applied, Some(0.3));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].score, 0.35);
+    }
+
+    #[test]
+    fn semantic_mode_never_applies_hybrid_threshold() {
+        let mut results = vec![result(0.12)];
+
+        let applied =
+            apply_score_threshold(&mut results, &SearchMode::Semantic, None, 0.3, Some(0.12));
+
+        assert_eq!(applied, None);
+        assert_eq!(results.len(), 1);
+    }
 }
 
 /// Find similar memories for suggested_links and duplicate detection.
@@ -704,7 +853,7 @@ async fn apply_reranker(
                 rerank_score,
                 score_delta,
                 if original_score > 0.0 {
-                    (score_delta / original_score * 100.0)
+                    score_delta / original_score * 100.0
                 } else {
                     0.0
                 },
@@ -748,4 +897,3 @@ async fn apply_reranker(
 
     Ok(())
 }
-

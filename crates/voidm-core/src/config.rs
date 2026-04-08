@@ -40,11 +40,21 @@ pub struct ChunkingConfig {
     pub chunk_overlap: usize,
 }
 
-fn default_chunking_enabled() -> bool { true }
-fn default_chunk_size() -> usize { 600 }
-fn default_chunk_min() -> usize { 150 }
-fn default_chunk_max() -> usize { 900 }
-fn default_chunk_overlap() -> usize { 100 }
+fn default_chunking_enabled() -> bool {
+    true
+}
+fn default_chunk_size() -> usize {
+    600
+}
+fn default_chunk_min() -> usize {
+    150
+}
+fn default_chunk_max() -> usize {
+    900
+}
+fn default_chunk_overlap() -> usize {
+    100
+}
 
 impl Default for ChunkingConfig {
     fn default() -> Self {
@@ -212,11 +222,17 @@ pub struct SignalsConfig {
     pub fuzzy: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 impl Default for SignalsConfig {
     fn default() -> Self {
-        Self { vector: true, bm25: true, fuzzy: true }
+        Self {
+            vector: true,
+            bm25: true,
+            fuzzy: true,
+        }
     }
 }
 
@@ -227,7 +243,7 @@ pub struct SearchConfig {
     /// Per-signal enable/disable for the unified RRF pipeline.
     #[serde(default)]
     pub signals: SignalsConfig,
-    /// Minimum score threshold for hybrid mode results (0.0–1.0). Default: 0.3.
+    /// Minimum score threshold for hybrid mode results (0.0–1.0). Default: 0.0.
     pub min_score: f32,
     /// Score decay per hop for graph-expanded neighbors. neighbor_score = parent_score * decay^depth.
     pub neighbor_decay: f32,
@@ -433,7 +449,7 @@ impl Default for SearchConfig {
         Self {
             mode: "hybrid".into(),
             default_limit: 10,
-            min_score: 0.3,
+            min_score: 0.0,
             neighbor_decay: 0.7,
             neighbor_min_score: 0.2,
             default_neighbor_depth: 1,
