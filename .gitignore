@@ -30,3 +30,6 @@ ort_cache/
 graph.dot
 graph.svg
 graph.json
+
+# Spark utils cache
+.spark_utils/

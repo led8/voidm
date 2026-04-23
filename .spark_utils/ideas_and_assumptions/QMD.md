@@ -1,1 +1,0 @@
-**acknowledgments** --> [QMD](https://github.com/tobi/qmd)
